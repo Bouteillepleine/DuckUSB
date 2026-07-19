@@ -3,6 +3,7 @@ package com.strawing.duckadb
 import android.content.Context
 import android.content.SharedPreferences
 import android.os.Bundle
+import android.provider.Settings
 import android.util.TypedValue
 import android.view.Gravity
 import android.view.ViewGroup
@@ -41,6 +42,7 @@ class MainActivity : AppCompatActivity() {
 
         root.addView(title("DuckADB"))
         root.addView(statusCard())
+        root.addView(selfReadCard())
         root.addView(body(
             "Makes scoped apps read USB debugging as OFF while it stays really on, and " +
             "hides the persistent \"USB debugging enabled\" notification."
@@ -72,6 +74,30 @@ class MainActivity : AppCompatActivity() {
         card.addView(TextView(this).apply {
             text = if (active) "✅ Module active" else "⭕ Not active — enable DuckADB in LSPosed"
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
+        })
+        return card
+    }
+
+    /**
+     * Self-test: reads the settings THIS process sees. If you scope DuckADB onto itself,
+     * the module spoofs these to 0 even though the system really has them on — proving the
+     * hook works, live. Open this screen, then force-stop & reopen after scoping.
+     */
+    private fun selfReadCard(): MaterialCardView {
+        val cr = contentResolver
+        fun g(k: String) = try { Settings.Global.getInt(cr, k, 0) } catch (t: Throwable) { -1 }
+        val adb = g("adb_enabled")
+        val dev = g("development_settings_enabled")
+        val wifi = g("adb_wifi_enabled")
+        fun mark(v: Int) = if (v == 0) "0 (looks off ✅)" else "$v"
+        val card = card(dp(14)).apply { cardElevation = 0f; strokeWidth = dp(1) }
+        card.addView(TextView(this).apply {
+            text = "As read in THIS app:\n" +
+                "· adb_enabled = ${mark(adb)}\n" +
+                "· development_settings_enabled = ${mark(dev)}\n" +
+                "· adb_wifi_enabled = ${mark(wifi)}\n\n" +
+                "Scope DuckADB onto itself to see these flip to 0 while the system stays on."
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
         })
         return card
     }

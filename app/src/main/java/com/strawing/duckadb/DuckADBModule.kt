@@ -4,6 +4,7 @@ import android.app.Notification
 import android.content.res.Resources
 import de.robv.android.xposed.IXposedHookLoadPackage
 import de.robv.android.xposed.XC_MethodHook
+import de.robv.android.xposed.XC_MethodReplacement
 import de.robv.android.xposed.XSharedPreferences
 import de.robv.android.xposed.XposedBridge
 import de.robv.android.xposed.XposedHelpers
@@ -54,6 +55,8 @@ class DuckADBModule : IXposedHookLoadPackage {
 
         /** Notification channels the ADB notifications live on (AOSP). */
         private val ADB_CHANNELS = setOf("DEVELOPER", "DEVELOPER_IMPORTANT")
+
+        private const val MAIN_ACTIVITY = "com.strawing.duckadb.MainActivity"
     }
 
     /** World-readable prefs written by the UI; re-read live so toggles apply without reboot. */
@@ -82,6 +85,19 @@ class DuckADBModule : IXposedHookLoadPackage {
         // A) Settings spoof — everywhere except the core OS packages.
         if (pkg !in SKIP_SPOOF_PACKAGES) {
             installSettingsSpoof(cl)
+        }
+
+        // Self-status: when injected into our own app, make isModuleActive() report true
+        // so the UI can show a truthful "active" state (requires DuckADB scoped to itself).
+        if (pkg == Config.PKG) {
+            try {
+                XposedHelpers.findAndHookMethod(
+                    "$MAIN_ACTIVITY", cl, "isModuleActive",
+                    XC_MethodReplacement.returnConstant(true)
+                )
+            } catch (t: Throwable) {
+                XposedBridge.log("$TAG: self-status hook failed: $t")
+            }
         }
     }
 
