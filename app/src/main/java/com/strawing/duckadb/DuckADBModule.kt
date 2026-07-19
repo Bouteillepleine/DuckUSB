@@ -4,6 +4,7 @@ import android.app.Notification
 import android.content.res.Resources
 import de.robv.android.xposed.IXposedHookLoadPackage
 import de.robv.android.xposed.XC_MethodHook
+import de.robv.android.xposed.XSharedPreferences
 import de.robv.android.xposed.XposedBridge
 import de.robv.android.xposed.XposedHelpers
 import de.robv.android.xposed.callbacks.XC_LoadPackage
@@ -55,6 +56,19 @@ class DuckADBModule : IXposedHookLoadPackage {
         private val ADB_CHANNELS = setOf("DEVELOPER", "DEVELOPER_IMPORTANT")
     }
 
+    /** World-readable prefs written by the UI; re-read live so toggles apply without reboot. */
+    private val prefs = XSharedPreferences(Config.PKG, Config.PREFS_NAME).apply { makeWorldReadable() }
+
+    private fun spoofOn(): Boolean {
+        prefs.reload()
+        return prefs.getBoolean(Config.KEY_SPOOF, true)
+    }
+
+    private fun hideNotifOn(): Boolean {
+        prefs.reload()
+        return prefs.getBoolean(Config.KEY_HIDE_NOTIF, true)
+    }
+
     override fun handleLoadPackage(lpparam: XC_LoadPackage.LoadPackageParam) {
         val pkg = lpparam.packageName
         val cl = lpparam.classLoader
@@ -88,6 +102,7 @@ class DuckADBModule : IXposedHookLoadPackage {
 
     private val settingsHook = object : XC_MethodHook() {
         override fun beforeHookedMethod(param: MethodHookParam) {
+            if (!spoofOn()) return
             // The key is the first String argument (getInt/getString/… (cr, key[, def])).
             val key = param.args.firstOrNull { it is String } as? String ?: return
             if (key !in SPOOF_KEYS) return
@@ -130,6 +145,7 @@ class DuckADBModule : IXposedHookLoadPackage {
 
     private val notifHook = object : XC_MethodHook() {
         override fun beforeHookedMethod(param: MethodHookParam) {
+            if (!hideNotifOn()) return
             val n = param.args.firstOrNull { it is Notification } as? Notification ?: return
             if (isAdbNotification(n)) {
                 // Swallow the post: original never runs, nothing is shown.

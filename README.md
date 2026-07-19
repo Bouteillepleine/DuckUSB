@@ -47,6 +47,17 @@ signing key is in the repo, so no secrets are needed) and uploads it as the
   `com.android.shell` and `com.android.phone`, so the Settings toggle and `adbd`
   never get lied to.
 
+## Live toggles
+
+The app has two switches, both **on** by default, written to a world-readable prefs file
+that the hook re-reads on every call — so flipping them applies **without a reboot** (at
+most force-stop the target app so it does a fresh read):
+
+- **Spoof USB debugging** — the `adb_enabled` / `adb_wifi_enabled` / Developer Options lie.
+- **Hide "USB debugging" notification** — the system_server / System UI suppressor.
+
+Turn either off to temporarily let apps see the real state, then back on.
+
 ## Install
 
 1. Build (`./gradlew :app:assembleRelease`) or grab the APK from
