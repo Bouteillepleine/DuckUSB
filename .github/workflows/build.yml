@@ -1,0 +1,43 @@
+name: Build APK
+
+on:
+  push:
+    branches: [ master ]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Drop machine-local JDK path
+        # gradle.properties pins org.gradle.java.home to a local Windows JBR;
+        # strip it on CI so Gradle uses the runner's JAVA_HOME (JDK 21).
+        run: sed -i '/org.gradle.java.home/d' gradle.properties
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Build release APK
+        run: |
+          chmod +x gradlew
+          ./gradlew :app:assembleRelease --no-daemon --stacktrace
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: DuckADB-release
+          path: app/build/outputs/apk/release/app-release.apk
+          if-no-files-found: error

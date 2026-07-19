@@ -16,10 +16,12 @@ class MainActivity : Activity() {
         val status = if (active) "✅ Module active" else "⚠️ Not active — enable in LSPosed"
         val tv = TextView(this).apply {
             text = "DuckADB\n\n$status\n\n" +
-                "Makes scoped apps read USB debugging as OFF while it stays on.\n\n" +
+                "Makes scoped apps read USB debugging as OFF while it stays on, and " +
+                "hides the persistent 'USB debugging enabled' notification.\n\n" +
                 "1. Enable DuckADB in LSPosed.\n" +
-                "2. In LSPosed → DuckADB → Scope, tick the apps you want to fool.\n" +
-                "3. Force-stop those apps (or reboot).\n\n" +
+                "2. Scope → tick your detector apps (banking, Intune, games) for the spoof.\n" +
+                "3. Scope → also tick 'System Framework' + 'System UI' to hide the notification.\n" +
+                "4. Force-stop those apps / reboot.\n\n" +
                 "Spoofed keys: adb_enabled, adb_wifi_enabled, development_settings_enabled."
             gravity = Gravity.CENTER
             textSize = 16f

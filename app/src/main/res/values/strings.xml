@@ -1,4 +1,4 @@
 <resources>
     <string name="app_name">DuckADB</string>
-    <string name="xposed_description">Makes scoped apps read USB debugging (adb_enabled) as off while it stays on. Also spoofs adb_wifi_enabled and development_settings_enabled. Set scope in LSPosed.</string>
+    <string name="xposed_description">Makes scoped apps read USB debugging (adb_enabled), wireless debugging and Developer Options as off while they stay on, and hides the persistent "USB debugging enabled" notification. Scope your detector apps + System Framework + System UI in LSPosed.</string>
 </resources>

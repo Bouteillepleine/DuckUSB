@@ -1,6 +1,8 @@
 # DuckADB
 
-An LSPosed / Xposed module that makes **scoped apps read USB debugging as OFF while it stays really ON** on the device — and does the same for wireless debugging and the Developer Options master toggle.
+[![Build APK](https://github.com/Bouteillepleine/DuckADB/actions/workflows/build.yml/badge.svg)](https://github.com/Bouteillepleine/DuckADB/actions/workflows/build.yml)
+
+An LSPosed / Xposed module that makes **scoped apps read USB debugging as OFF while it stays really ON** on the device — and does the same for wireless debugging and the Developer Options master toggle. It can also **hide the persistent "USB debugging enabled" notification**.
 
 Detection apps (banking, MDM/Intune, games, integrity checks) don't read any real "adb" state — they query the settings provider:
 
@@ -16,6 +18,25 @@ DuckADB hooks the static getters on `android.provider.Settings$Global` and
 key is one of the three above, it returns the "off" value (`0` / `"0"`). Every other
 setting passes through untouched, and the device keeps debugging genuinely enabled so
 `adb` still works for you.
+
+## Hiding the notification
+
+The persistent *"USB debugging enabled / Débogage USB activé"* notification is posted by
+`system_server`, so a second, independent hook runs in the **System Framework** and
+**System UI** processes. It swallows the post at `NotificationManager.notify*` and at
+`NotificationManagerService.enqueueNotificationInternal`, matching the ADB notification
+by its channel (`DEVELOPER` / `DEVELOPER_IMPORTANT`) and by the ROM's own localized
+title strings (`adb_active_notification_title`, `adb_wifi_active_notification_title`),
+resolved live so any wording/language matches.
+
+To enable it: in LSPosed → DuckADB → Scope, also tick **System Framework** and
+**System UI**, then reboot.
+
+## CI
+
+`.github/workflows/build.yml` builds a signed release APK on every push / PR (the module
+signing key is in the repo, so no secrets are needed) and uploads it as the
+**DuckADB-release** artifact.
 
 ## Why it's safe by design
 
