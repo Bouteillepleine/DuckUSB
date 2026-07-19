@@ -1,0 +1,51 @@
+# DuckADB
+
+An LSPosed / Xposed module that makes **scoped apps read USB debugging as OFF while it stays really ON** on the device — and does the same for wireless debugging and the Developer Options master toggle.
+
+Detection apps (banking, MDM/Intune, games, integrity checks) don't read any real "adb" state — they query the settings provider:
+
+```
+Settings.Global.getInt(cr, "adb_enabled")                  // USB debugging
+Settings.Global.getInt(cr, "adb_wifi_enabled")             // wireless / ADB-over-Wi-Fi
+Settings.Global.getInt(cr, "development_settings_enabled")  // Developer Options
+Settings.Secure.getInt(cr, "adb_enabled")                  // legacy (pre-4.2) location
+```
+
+DuckADB hooks the static getters on `android.provider.Settings$Global` and
+`android.provider.Settings$Secure` inside each **scoped** process. When the requested
+key is one of the three above, it returns the "off" value (`0` / `"0"`). Every other
+setting passes through untouched, and the device keeps debugging genuinely enabled so
+`adb` still works for you.
+
+## Why it's safe by design
+
+- **Per-app scope.** Nothing happens until you tick apps in the LSPosed manager. The
+  module ships with **no** default scope.
+- **Core OS is hard-skipped.** Even if you accidentally scope the framework, DuckADB
+  refuses to run in `android`, `com.android.settings`, `com.android.systemui`,
+  `com.android.shell` and `com.android.phone`, so the Settings toggle and `adbd`
+  never get lied to.
+
+## Install
+
+1. Build (`./gradlew :app:assembleRelease`) or grab the APK from
+   `app/build/outputs/apk/release/app-release.apk`.
+2. Install it, enable **DuckADB** in LSPosed.
+3. LSPosed → DuckADB → **Scope**: tick the apps you want to fool.
+4. Force-stop those apps (or reboot).
+
+## Build
+
+- JDK 21 (Android Studio JBR). `gradle.properties` pins `org.gradle.java.home`.
+- `./gradlew :app:assembleRelease`
+
+## Spoofed keys
+
+| Key | Meaning | Forced value |
+|-----|---------|--------------|
+| `adb_enabled` | USB debugging | `0` |
+| `adb_wifi_enabled` | Wireless debugging | `0` |
+| `development_settings_enabled` | Developer Options | `0` |
+
+To change the list, edit `SPOOF_KEYS` in
+[`DuckADBModule.kt`](app/src/main/java/com/strawing/duckadb/DuckADBModule.kt).
