@@ -1,4 +1,4 @@
-package com.strawing.duckadb
+package com.strawing.duckusb
 
 import android.app.Notification
 import android.content.res.Resources
@@ -12,7 +12,7 @@ import de.robv.android.xposed.callbacks.XC_LoadPackage
 import java.lang.reflect.Method
 
 /**
- * DuckADB — two independent tricks:
+ * DuckUSB — two independent tricks:
  *
  *  A) SETTINGS SPOOF (per detector app). Makes scoped apps read USB debugging,
  *     wireless debugging and Developer Options as OFF while they stay really ON,
@@ -29,10 +29,10 @@ import java.lang.reflect.Method
  *   - tick your detector apps (banking, Intune, games…) for the spoof, and
  *   - tick "System Framework" + "System UI" to kill the notification.
  */
-class DuckADBModule : IXposedHookLoadPackage {
+class DuckUSBModule : IXposedHookLoadPackage {
 
     companion object {
-        private const val TAG = "DuckADB"
+        private const val TAG = "DuckUSB"
 
         /** Setting keys we force to the "disabled" value. */
         private val SPOOF_KEYS = setOf(
@@ -56,7 +56,7 @@ class DuckADBModule : IXposedHookLoadPackage {
         /** Notification channels the ADB notifications live on (AOSP). */
         private val ADB_CHANNELS = setOf("DEVELOPER", "DEVELOPER_IMPORTANT")
 
-        private const val MAIN_ACTIVITY = "com.strawing.duckadb.MainActivity"
+        private const val MAIN_ACTIVITY = "com.strawing.duckusb.MainActivity"
     }
 
     /** World-readable prefs written by the UI; re-read live so toggles apply without reboot. */
@@ -88,7 +88,7 @@ class DuckADBModule : IXposedHookLoadPackage {
         }
 
         // Self-status: when injected into our own app, make isModuleActive() report true
-        // so the UI can show a truthful "active" state (requires DuckADB scoped to itself).
+        // so the UI can show a truthful "active" state (requires DuckUSB scoped to itself).
         if (pkg == Config.PKG) {
             try {
                 XposedHelpers.findAndHookMethod(

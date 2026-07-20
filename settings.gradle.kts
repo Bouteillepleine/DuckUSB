@@ -15,5 +15,5 @@ dependencyResolutionManagement {
         maven { url = uri("https://jitpack.io") }
     }
 }
-rootProject.name = "DuckADB"
+rootProject.name = "DuckUSB"
 include(":app")

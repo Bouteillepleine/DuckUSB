@@ -1,4 +1,4 @@
-package com.strawing.duckadb
+package com.strawing.duckusb
 
 import android.content.Context
 import android.content.SharedPreferences
@@ -11,6 +11,8 @@ import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
 import com.google.android.material.card.MaterialCardView
 import com.google.android.material.color.DynamicColors
 import com.google.android.material.materialswitch.MaterialSwitch
@@ -40,7 +42,7 @@ class MainActivity : AppCompatActivity() {
             setPadding(dp(20), dp(24), dp(20), dp(24))
         }
 
-        root.addView(title("DuckADB"))
+        root.addView(title("DuckUSB"))
         root.addView(statusCard())
         root.addView(selfReadCard())
         root.addView(body(
@@ -60,26 +62,35 @@ class MainActivity : AppCompatActivity() {
         ))
 
         root.addView(warn(
-            "⚠  In LSPosed → DuckADB → Scope: tick your detector apps (banking, Intune, games) " +
+            "⚠  In LSPosed → DuckUSB → Scope: tick your detector apps (banking, Intune, games) " +
             "for the spoof, and tick System Framework + System UI to hide the notification. " +
             "Force-stop a target app / reboot after changing scope."
         ))
 
-        setContentView(ScrollView(this).apply { addView(root) })
+        val scroll = ScrollView(this).apply { addView(root) }
+        // Content draws edge-to-edge (transparent status bar); pad the root by the real
+        // status-bar inset instead of guessing a fixed offset, so the title clears it on
+        // every device / cutout.
+        ViewCompat.setOnApplyWindowInsetsListener(scroll) { v, insets ->
+            val bars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
+            root.setPadding(dp(20), dp(24) + bars.top, dp(20), dp(24) + bars.bottom)
+            insets
+        }
+        setContentView(scroll)
     }
 
     private fun statusCard(): MaterialCardView {
         val active = isModuleActive()
         val card = card(dp(16))
         card.addView(TextView(this).apply {
-            text = if (active) "✅ Module active" else "⭕ Not active — enable DuckADB in LSPosed"
+            text = if (active) "✅ Module active" else "⭕ Not active — enable DuckUSB in LSPosed"
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
         })
         return card
     }
 
     /**
-     * Self-test: reads the settings THIS process sees. If you scope DuckADB onto itself,
+     * Self-test: reads the settings THIS process sees. If you scope DuckUSB onto itself,
      * the module spoofs these to 0 even though the system really has them on — proving the
      * hook works, live. Open this screen, then force-stop & reopen after scoping.
      */
@@ -96,7 +107,7 @@ class MainActivity : AppCompatActivity() {
                 "· adb_enabled = ${mark(adb)}\n" +
                 "· development_settings_enabled = ${mark(dev)}\n" +
                 "· adb_wifi_enabled = ${mark(wifi)}\n\n" +
-                "Scope DuckADB onto itself to see these flip to 0 while the system stays on."
+                "Scope DuckUSB onto itself to see these flip to 0 while the system stays on."
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
         })
         return card

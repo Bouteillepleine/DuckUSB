@@ -6,7 +6,7 @@
         android:icon="@mipmap/ic_launcher"
         android:label="@string/app_name"
         android:supportsRtl="true"
-        android:theme="@style/Theme.DuckADB">
+        android:theme="@style/Theme.DuckUSB">
 
         <!-- Xposed / LSPosed module descriptors -->
         <meta-data

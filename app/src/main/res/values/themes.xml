@@ -1,5 +1,5 @@
 <resources>
-    <style name="Theme.DuckADB" parent="Theme.Material3.DayNight.NoActionBar">
+    <style name="Theme.DuckUSB" parent="Theme.Material3.DayNight.NoActionBar">
         <item name="android:statusBarColor">@android:color/transparent</item>
     </style>
 </resources>
