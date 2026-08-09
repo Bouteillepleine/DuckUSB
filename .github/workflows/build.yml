@@ -9,6 +9,9 @@ on:
 permissions:
   contents: read
 
+env:
+  NDK_VERSION: "27.2.12479018"
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -27,6 +30,11 @@ jobs:
         # strip it on CI so Gradle uses the runner's JAVA_HOME (JDK 21).
         run: sed -i '/org.gradle.java.home/d' gradle.properties
 
+      - name: Install NDK
+        # The native prop-spoof lib (libduckusb.so) is built via ndk-build, so the
+        # exact NDK pinned by android.ndkVersion must be present on the runner.
+        run: echo "y" | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "ndk;${NDK_VERSION}"
+
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
 
@@ -34,6 +42,26 @@ jobs:
         run: |
           chmod +x gradlew
           ./gradlew :app:assembleRelease --no-daemon --stacktrace
+
+      - name: Verify APK (native lib present on all ABIs + symbols exported)
+        # Codifies the release checklist: every ABI ships libduckusb.so, and the lib
+        # exports the LSPosed entrypoint (native_init) and the JNI bridge (setProps).
+        run: |
+          set -euo pipefail
+          APK=app/build/outputs/apk/release/app-release.apk
+          echo "Checking ABIs in $APK"
+          for abi in armeabi-v7a arm64-v8a x86 x86_64; do
+            unzip -l "$APK" | grep -q "lib/$abi/libduckusb.so" \
+              && echo "  ok: $abi" \
+              || { echo "  MISSING: lib/$abi/libduckusb.so"; exit 1; }
+          done
+          READELF=$(ls "$ANDROID_HOME"/ndk/${NDK_VERSION}/toolchains/llvm/prebuilt/*/bin/llvm-readelf | head -1)
+          unzip -o -q "$APK" 'lib/arm64-v8a/libduckusb.so' -d _apkcheck
+          SYMS=$("$READELF" --dyn-syms _apkcheck/lib/arm64-v8a/libduckusb.so)
+          echo "$SYMS" | grep -q ' native_init' || { echo "native_init not exported"; exit 1; }
+          echo "$SYMS" | grep -q 'Java_com_strawing_duckusb_NativeProps_setProps' \
+            || { echo "setProps JNI not exported"; exit 1; }
+          echo "APK verification passed."
 
       - name: Upload APK
         uses: actions/upload-artifact@v4

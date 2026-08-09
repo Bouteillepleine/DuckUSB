@@ -32,6 +32,25 @@ resolved live so any wording/language matches.
 To enable it: in LSPosed → DuckUSB → Scope, also tick **System Framework** and
 **System UI**, then reboot.
 
+## Spoofing the system properties
+
+Some detectors skip the settings provider and read the raw USB/adb **system properties**
+instead — either through `android.os.SystemProperties` or by calling libc directly. A
+third hook (same per-app scope as the settings spoof) makes those read back as a plain,
+MTP-only, adbd-stopped device. It works at two levels so nothing gets through:
+
+- **Java** — hooks `android.os.SystemProperties.native_get*`, covering apps that call
+  `SystemProperties.get()` / `getInt()` / `getBoolean()`.
+- **Native** — `libduckusb.so` inline-hooks `__system_property_get` and
+  `__system_property_find`, catching native code, `getprop` via `exec`, and the modern
+  `SystemProperties.get()` path that routes through `__system_property_find` (which the
+  Java hook alone would miss). Installed once per process; **skips core OS processes**
+  (system_server / SystemUI) entirely, and the override map is published lock-free so a
+  property read from inside the hook can never deadlock.
+
+`persist.sys.usb.config` is deliberately left untouched. The override list lives in
+`PROP_OVERRIDES` in [`Config.kt`](app/src/main/java/com/strawing/duckusb/Config.kt).
+
 ## CI
 
 `.github/workflows/build.yml` builds a signed release APK on every push / PR (the module
@@ -49,14 +68,16 @@ signing key is in the repo, so no secrets are needed) and uploads it as the
 
 ## Live toggles
 
-The app has two switches, both **on** by default, written to a world-readable prefs file
+The app has three switches, all **on** by default, written to a world-readable prefs file
 that the hook re-reads on every call — so flipping them applies **without a reboot** (at
 most force-stop the target app so it does a fresh read):
 
 - **Spoof USB debugging** — the `adb_enabled` / `adb_wifi_enabled` / Developer Options lie.
 - **Hide "USB debugging" notification** — the system_server / System UI suppressor.
+- **Spoof USB system properties** — the `sys.usb.*` / `init.svc.adbd` lie via the Java and
+  native libc hooks (the native half applies on the target's next start).
 
-Turn either off to temporarily let apps see the real state, then back on.
+Turn any off to temporarily let apps see the real state, then back on.
 
 ## Install
 
@@ -69,6 +90,7 @@ Turn either off to temporarily let apps see the real state, then back on.
 ## Build
 
 - JDK 21 (Android Studio JBR). `gradle.properties` pins `org.gradle.java.home`.
+- NDK `27.2.12479018` (pinned via `android.ndkVersion`) for the native `libduckusb.so`.
 - `./gradlew :app:assembleRelease`
 
 ## Spoofed keys
@@ -81,3 +103,17 @@ Turn either off to temporarily let apps see the real state, then back on.
 
 To change the list, edit `SPOOF_KEYS` in
 [`DuckUSBModule.kt`](app/src/main/java/com/strawing/duckusb/DuckUSBModule.kt).
+
+## Spoofed properties
+
+Applied to scoped apps at the Java (`SystemProperties`) and native (libc) layers:
+
+| Property | Meaning | Forced value |
+|----------|---------|--------------|
+| `sys.usb.ffs.ready` | ADB gadget function ready | `0` |
+| `sys.usb.config` | Current USB function config | `mtp` |
+| `sys.usb.state` | Current USB state | `mtp` |
+| `init.svc.adbd` | adbd service state | `stopped` |
+
+`persist.sys.usb.config` is intentionally excluded. To change the list, edit
+`PROP_OVERRIDES` in [`Config.kt`](app/src/main/java/com/strawing/duckusb/Config.kt).
