@@ -2,6 +2,8 @@ package com.strawing.duckusb
 
 import android.app.Notification
 import android.content.res.Resources
+import android.os.Binder
+import android.os.Bundle
 import de.robv.android.xposed.IXposedHookLoadPackage
 import de.robv.android.xposed.XC_MethodHook
 import de.robv.android.xposed.XC_MethodReplacement
@@ -53,6 +55,16 @@ class DuckUSBModule : IXposedHookLoadPackage {
         /** Static getters that take a String key we can inspect. */
         private val GETTERS = arrayOf("getInt", "getString", "getLong", "getFloat")
 
+        /** First application UID; anything below (root/system/shell) is never lied to. */
+        private const val FIRST_APP_UID = 10000
+
+        /** SettingsProvider.call methods that fetch a value we may want to spoof. */
+        private val GET_METHODS = setOf("GET_global", "GET_secure")
+
+        /** Bundle keys used by the settings-provider call protocol. */
+        private const val CALL_VALUE = "value"                 // Settings.NameValueTable.VALUE
+        private const val CALL_GENERATION_INDEX = "_generation_index" // CALL_METHOD_GENERATION_INDEX_KEY
+
         /** Notification channels the ADB notifications live on (AOSP). */
         private val ADB_CHANNELS = setOf("DEVELOPER", "DEVELOPER_IMPORTANT")
 
@@ -77,6 +89,20 @@ class DuckUSBModule : IXposedHookLoadPackage {
         return prefs.getBoolean(Config.KEY_SPOOF_PROPS, true)
     }
 
+    /** Framework mode defaults ON; the client-side per-app fallback defaults OFF. */
+    private fun frameworkModeOn(): Boolean {
+        prefs.reload()
+        return prefs.getBoolean(Config.KEY_FRAMEWORK_MODE, true)
+    }
+
+    private fun clientFallbackOn(): Boolean {
+        prefs.reload()
+        return prefs.getBoolean(Config.KEY_CLIENT_FALLBACK, false)
+    }
+
+    /** Carries the binder caller UID from before→after of Transport.call (per thread). */
+    private val txnCallerUid = ThreadLocal<Int>()
+
     override fun handleLoadPackage(lpparam: XC_LoadPackage.LoadPackageParam) {
         val pkg = lpparam.packageName
         val cl = lpparam.classLoader
@@ -84,14 +110,22 @@ class DuckUSBModule : IXposedHookLoadPackage {
         // B) Notification suppressor — only where the ADB notification can originate.
         if (pkg == "android" || pkg == "com.android.systemui") {
             installNotificationSuppressor(cl)
-            if (pkg == "android") installSystemServerSuppressor(cl)
+            if (pkg == "android") {
+                installSystemServerSuppressor(cl)
+                // A0) Framework mode (default): one server-side hook in system_server covers
+                //     the Settings spoof for EVERY app — no per-app scope. Just scope System
+                //     Framework. Gated per-caller by UID so shell/system still see the truth.
+                if (frameworkModeOn()) installFrameworkSettingsSpoof(cl)
+            }
         }
 
-        // A) Settings spoof — everywhere except the core OS packages.
+        // A) Settings spoof (per-app, client side) — now an OFF-by-default fallback for apps
+        //    that dodge framework mode. Never in the core OS packages.
         if (pkg !in SKIP_SPOOF_PACKAGES) {
-            installSettingsSpoof(cl)
+            if (clientFallbackOn()) installSettingsSpoof(cl)
             // A2) Property spoof — same scope. Closes the gap where a detector reads the
             //     raw sys.usb.* / init.svc.adbd props instead of the Settings provider.
+            //     This is inherently per-app: property reads happen inside the target process.
             installSystemPropertiesSpoof(cl)
             installNativePropSpoof()
         }
@@ -139,6 +173,72 @@ class DuckUSBModule : IXposedHookLoadPackage {
                 java.lang.Integer.TYPE -> 0
                 String::class.java -> "0"
                 else -> 0
+            }
+        }
+    }
+
+    // ================= A0) FRAMEWORK-MODE SETTINGS SPOOF (system_server) =================
+
+    /**
+     * Server-side settings spoof: hook the provider transport that every ContentResolver.call
+     * funnels through in system_server, so a single System-Framework hook lies to all apps at
+     * once — catching even callers that use ContentResolver.call/reflection directly (which the
+     * client-side getter hook misses). We deliberately run this ONLY in system_server and gate
+     * per-caller by UID, so shell/system keep reading the real state and adb stays functional.
+     */
+    private fun installFrameworkSettingsSpoof(cl: ClassLoader) {
+        val transport = XposedHelpers.findClassIfExists("android.content.ContentProvider\$Transport", cl)
+        if (transport == null) {
+            XposedBridge.log("$TAG: ContentProvider\$Transport not found; framework mode disabled")
+            return
+        }
+        try {
+            // hookAllMethods handles the per-Android-version signature drift of Transport.call
+            // (AttributionSource form on S+, callingPkg forms on Q/R).
+            XposedBridge.hookAllMethods(transport, "call", frameworkCallHook)
+            XposedBridge.log("$TAG: framework settings spoof installed on Transport.call")
+        } catch (t: Throwable) {
+            XposedBridge.log("$TAG: framework settings spoof hook failed: $t")
+        }
+    }
+
+    private val frameworkCallHook = object : XC_MethodHook() {
+        override fun beforeHookedMethod(param: MethodHookParam) {
+            // Capture the remote caller's UID while the binder identity is still set on entry.
+            try { txnCallerUid.set(Binder.getCallingUid()) } catch (_: Throwable) {}
+        }
+
+        override fun afterHookedMethod(param: MethodHookParam) {
+            try {
+                val uid = txnCallerUid.get() ?: return
+                // Only real apps get lied to; root/system/shell (uid<10000 in any user) see truth.
+                if (uid % 100000 < FIRST_APP_UID) return
+
+                // Cheap match FIRST (this fires on every provider call in system_server): the
+                // setting key always immediately follows the GET_* method arg, whatever the
+                // Transport.call signature is on this Android version.
+                val args = param.args ?: return
+                var key: String? = null
+                for (i in 0 until args.size - 1) {
+                    val a = args[i]
+                    if (a is String && a in GET_METHODS) {
+                        key = args[i + 1] as? String
+                        break
+                    }
+                }
+                if (key == null || key !in SPOOF_KEYS) return
+                if (!spoofOn()) return
+
+                val bundle = param.result as? Bundle ?: return
+                if (bundle.containsKey(CALL_VALUE)) {
+                    bundle.putString(CALL_VALUE, "0")
+                    // Make the client NameValueCache treat this as uncacheable (-1) so our hook
+                    // runs on every read instead of a stale real value being served from cache.
+                    bundle.putInt(CALL_GENERATION_INDEX, -1)
+                }
+            } catch (_: Throwable) {
+            } finally {
+                txnCallerUid.remove()
             }
         }
     }

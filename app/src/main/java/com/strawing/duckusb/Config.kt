@@ -8,6 +8,22 @@ object Config {
     /** Spoof adb_enabled / adb_wifi_enabled / development_settings_enabled to scoped apps. */
     const val KEY_SPOOF = "spoof_enabled"
 
+    /**
+     * Framework mode (default ON): a single hook in System Framework (system_server) on
+     * ContentProvider$Transport.call spoofs the adb Settings keys for EVERY caller app at
+     * the server-side chokepoint, gated by caller UID (apps only, never shell/system). No
+     * per-app scope needed — just scope System Framework. Install-time; reboot to apply.
+     */
+    const val KEY_FRAMEWORK_MODE = "framework_mode_enabled"
+
+    /**
+     * Per-app client-side Settings fallback (default OFF): the legacy hook on the static
+     * Settings.Global/Secure getters, installed only in scoped apps. Framework mode already
+     * covers the normal paths; enable this only for an app that dodges it. Restart the app
+     * to apply.
+     */
+    const val KEY_CLIENT_FALLBACK = "client_settings_fallback"
+
     /** Hide the persistent "USB debugging enabled" notification. */
     const val KEY_HIDE_NOTIF = "hide_notif_enabled"
 

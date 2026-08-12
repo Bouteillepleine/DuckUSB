@@ -12,17 +12,28 @@ val keystoreProperties = Properties().apply {
     }
 }
 
+// Signing inputs: prefer a local, git-ignored key.properties for developer builds; otherwise
+// fall back to environment variables injected from CI secrets. The keystore is NEVER committed.
+val signStoreFile: String? = keystoreProperties.getProperty("storeFile") ?: System.getenv("DUCKUSB_STORE_FILE")
+val signStorePassword: String? = keystoreProperties.getProperty("storePassword") ?: System.getenv("DUCKUSB_STORE_PASSWORD")
+val signKeyAlias: String? = keystoreProperties.getProperty("keyAlias") ?: System.getenv("DUCKUSB_KEY_ALIAS")
+val signKeyPassword: String? = keystoreProperties.getProperty("keyPassword") ?: System.getenv("DUCKUSB_KEY_PASSWORD")
+val hasSigning: Boolean =
+    signStoreFile != null && signStorePassword != null && signKeyAlias != null && signKeyPassword != null
+
 android {
     compileSdk = 35
     namespace = "com.strawing.duckusb"
-    ndkVersion = "27.2.12479018"
+    // CI pins 27.2.12479018 (installed via sdkmanager). Local builds can override with
+    // -PduckusbNdk=<installed-version> without touching the committed CI value.
+    ndkVersion = (findProperty("duckusbNdk") as String?) ?: "27.2.12479018"
 
     defaultConfig {
         applicationId = "com.strawing.duckusb"
         minSdk = 26
         targetSdk = 35
-        versionCode = 2
-        versionName = "1.1"
+        versionCode = 3
+        versionName = "1.2"
         vectorDrawables { useSupportLibrary = true }
         ndk {
             abiFilters += listOf("armeabi-v7a", "arm64-v8a", "x86", "x86_64")
@@ -36,12 +47,12 @@ android {
     }
 
     signingConfigs {
-        if (keystoreProperties.isNotEmpty()) {
+        if (hasSigning) {
             create("release") {
-                storeFile = rootProject.file(keystoreProperties.getProperty("storeFile"))
-                storePassword = keystoreProperties.getProperty("storePassword")
-                keyAlias = keystoreProperties.getProperty("keyAlias")
-                keyPassword = keystoreProperties.getProperty("keyPassword")
+                storeFile = rootProject.file(signStoreFile!!)
+                storePassword = signStorePassword
+                keyAlias = signKeyAlias
+                keyPassword = signKeyPassword
             }
         }
     }
@@ -53,7 +64,7 @@ android {
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro"
             )
-            if (keystoreProperties.isNotEmpty()) {
+            if (hasSigning) {
                 signingConfig = signingConfigs.getByName("release")
             }
         }

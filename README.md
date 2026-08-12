@@ -13,11 +13,18 @@ Settings.Global.getInt(cr, "development_settings_enabled")  // Developer Options
 Settings.Secure.getInt(cr, "adb_enabled")                  // legacy (pre-4.2) location
 ```
 
-DuckUSB hooks the static getters on `android.provider.Settings$Global` and
-`android.provider.Settings$Secure` inside each **scoped** process. When the requested
-key is one of the three above, it returns the "off" value (`0` / `"0"`). Every other
-setting passes through untouched, and the device keeps debugging genuinely enabled so
-`adb` still works for you.
+By default DuckUSB does this in **framework mode**: a single hook in **System Framework**
+(system_server) on `android.content.ContentProvider$Transport.call` — the server-side
+chokepoint every `ContentResolver.call` funnels through — rewrites the result for those
+keys for **every** app at once, so you don't scope detectors one by one. It's gated by the
+caller's UID: only real apps (UID ≥ 10000) are lied to, never shell or system, so `adbd`
+and the Settings toggle keep seeing the truth and `adb` still works for you. It also resets
+the reply's `_generation_index` to `-1` so the client-side settings cache can't serve a
+stale real value. Every other setting passes through untouched.
+
+A per-app **client-side fallback** (hooks the static getters on `Settings$Global` /
+`Settings$Secure` inside a scoped app) is included but **off by default** — enable it only
+for an app that somehow dodges framework mode.
 
 ## Hiding the notification
 
@@ -53,9 +60,17 @@ MTP-only, adbd-stopped device. It works at two levels so nothing gets through:
 
 ## CI
 
-`.github/workflows/build.yml` builds a signed release APK on every push / PR (the module
-signing key is in the repo, so no secrets are needed) and uploads it as the
-**DuckUSB-release** artifact.
+`.github/workflows/build.yml` builds a release APK on every push / PR and uploads it as the
+**DuckUSB-release** artifact. Signing material is **not** in the repo — CI reconstructs the
+keystore from repository secrets:
+
+- `DUCKUSB_KEYSTORE_BASE64` — `base64 -w0` of the release `.jks`
+- `DUCKUSB_STORE_PASSWORD`, `DUCKUSB_KEY_ALIAS`, `DUCKUSB_KEY_PASSWORD`
+
+A fork without these secrets still builds; the release APK just comes out unsigned. For
+local builds, drop a git-ignored `key.properties` (`storeFile` / `storePassword` /
+`keyAlias` / `keyPassword`) next to the project — `app/build.gradle.kts` prefers it and
+falls back to the CI env vars otherwise.
 
 ## Why it's safe by design
 
@@ -84,8 +99,10 @@ Turn any off to temporarily let apps see the real state, then back on.
 1. Build (`./gradlew :app:assembleRelease`) or grab the APK from
    `app/build/outputs/apk/release/app-release.apk`.
 2. Install it, enable **DuckUSB** in LSPosed.
-3. LSPosed → DuckUSB → **Scope**: tick the apps you want to fool.
-4. Force-stop those apps (or reboot).
+3. LSPosed → DuckUSB → **Scope**: tick **System Framework** + **System UI**. That alone
+   covers the Settings spoof (framework mode) for every app plus the notification hider.
+   Only add individual apps if you also want the **system-property** spoof for them.
+4. **Reboot** after scoping System Framework. Force-stop an individual app after scoping it.
 
 ## Build
 

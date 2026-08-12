@@ -38,7 +38,26 @@ jobs:
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
 
+      - name: Decode signing keystore
+        # The keystore is NOT in the repo. CI reconstructs it from a base64 secret and
+        # feeds the signing config via env vars (see app/build.gradle.kts). A fork without
+        # these secrets still builds — the release APK just comes out unsigned.
+        env:
+          KEYSTORE_B64: ${{ secrets.DUCKUSB_KEYSTORE_BASE64 }}
+        run: |
+          if [ -n "$KEYSTORE_B64" ]; then
+            echo "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/duckusb-release.jks"
+            echo "DUCKUSB_STORE_FILE=$RUNNER_TEMP/duckusb-release.jks" >> "$GITHUB_ENV"
+            echo "signing keystore decoded"
+          else
+            echo "::warning::No DUCKUSB_KEYSTORE_BASE64 secret; release APK will be unsigned."
+          fi
+
       - name: Build release APK
+        env:
+          DUCKUSB_STORE_PASSWORD: ${{ secrets.DUCKUSB_STORE_PASSWORD }}
+          DUCKUSB_KEY_ALIAS: ${{ secrets.DUCKUSB_KEY_ALIAS }}
+          DUCKUSB_KEY_PASSWORD: ${{ secrets.DUCKUSB_KEY_PASSWORD }}
         run: |
           chmod +x gradlew
           ./gradlew :app:assembleRelease --no-daemon --stacktrace

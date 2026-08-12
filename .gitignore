@@ -8,3 +8,11 @@ build/
 .externalNativeBuild
 .cxx
 *.apk.idsig
+
+# Signing material — NEVER commit. Keystore comes from a local key.properties
+# (developer) or from CI secrets (DUCKUSB_KEYSTORE_BASE64 + password secrets).
+*.jks
+*.keystore
+/key.properties
+*.jks.b64
+.rotated_store_password.txt

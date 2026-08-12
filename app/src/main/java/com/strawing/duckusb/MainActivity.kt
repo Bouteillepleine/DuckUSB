@@ -134,7 +134,7 @@ class MainActivity : AppCompatActivity() {
             })
             addView(TextView(this@MainActivity).apply {
                 text = if (active) "Hooks are live in this process"
-                       else "Enable DuckUSB in LSPosed, then scope your apps"
+                       else "Enable DuckUSB in LSPosed, then scope System Framework"
                 setTextColor(fg); alpha = 0.9f
                 setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
             })
@@ -198,16 +198,24 @@ class MainActivity : AppCompatActivity() {
         col.addView(toggleRow("🔌", "Spoof USB debugging",
             "adb_enabled · adb_wifi_enabled · Developer Options → off", Config.KEY_SPOOF))
         col.addView(thinDivider())
+        col.addView(toggleRow("🛡️", "Framework mode (recommended)",
+            "One System-Framework hook spoofs Settings for every app — no per-app scope (reboot to apply)",
+            Config.KEY_FRAMEWORK_MODE))
+        col.addView(thinDivider())
+        col.addView(toggleRow("🎯", "Per-app Settings fallback",
+            "Legacy client-side hook; enable only for an app that dodges framework mode (restart app)",
+            Config.KEY_CLIENT_FALLBACK, default = false))
+        col.addView(thinDivider())
         col.addView(toggleRow("🔕", "Hide \"USB debugging\" notification",
             "Needs System Framework + System UI in scope", Config.KEY_HIDE_NOTIF))
         col.addView(thinDivider())
         col.addView(toggleRow("⚙️", "Spoof USB system properties",
-            "sys.usb.* · init.svc.adbd — Java + native (restart target for native)", Config.KEY_SPOOF_PROPS))
+            "sys.usb.* · init.svc.adbd — per-app, Java + native (restart target for native)", Config.KEY_SPOOF_PROPS))
         card.addView(col)
         return card
     }
 
-    private fun toggleRow(icon: String, title: String, subtitle: String, key: String): View {
+    private fun toggleRow(icon: String, title: String, subtitle: String, key: String, default: Boolean = true): View {
         val row = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
@@ -235,7 +243,7 @@ class MainActivity : AppCompatActivity() {
             })
         })
         val sw = MaterialSwitch(this).apply {
-            isChecked = prefs.getBoolean(key, true)
+            isChecked = prefs.getBoolean(key, default)
             setPadding(dp(10), 0, 0, 0)
             setOnCheckedChangeListener { _, checked -> prefs.edit().putBoolean(key, checked).apply() }
         }
@@ -254,9 +262,10 @@ class MainActivity : AppCompatActivity() {
                 text = "💡"; setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f); setPadding(0, 0, dp(10), 0)
             })
             addView(TextView(this@MainActivity).apply {
-                text = "In LSPosed → DuckUSB → Scope, tick your detector apps (banking, Intune, games) " +
-                    "for the spoof, and System Framework + System UI to hide the notification. " +
-                    "Force-stop a target after changing scope."
+                text = "In LSPosed → DuckUSB → Scope, tick System Framework + System UI — that alone " +
+                    "covers the Settings spoof (framework mode) for every app plus the notification. " +
+                    "Only add individual apps if you also need the system-property spoof for them. " +
+                    "Reboot after scoping System Framework; force-stop an app after scoping it."
                 setTextColor(cOnSurfaceVar)
                 setTextSize(TypedValue.COMPLEX_UNIT_SP, 12.5f)
             })
