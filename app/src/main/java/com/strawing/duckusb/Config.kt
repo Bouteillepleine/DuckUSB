@@ -9,18 +9,18 @@ object Config {
     const val KEY_SPOOF = "spoof_enabled"
 
     /**
-     * Framework mode (default ON): a single hook in System Framework (system_server) on
-     * ContentProvider$Transport.call spoofs the adb Settings keys for EVERY caller app at
-     * the server-side chokepoint, gated by caller UID (apps only, never shell/system). No
-     * per-app scope needed — just scope System Framework. Install-time; reboot to apply.
+     * Framework mode — EXPERIMENTAL, default OFF. A single hook in System Framework
+     * (system_server) on ContentProvider$Transport.call would spoof the adb Settings keys
+     * for every app at the server-side chokepoint. ⚠️ On some ROMs (verified OP15 / Android
+     * 16) hooking Transport.call in system_server BOOTLOOPS the device, so this stays a
+     * manual opt-in: scope System Framework yourself and enable this at your own risk.
      */
     const val KEY_FRAMEWORK_MODE = "framework_mode_enabled"
 
     /**
-     * Per-app client-side Settings fallback (default OFF): the legacy hook on the static
-     * Settings.Global/Secure getters, installed only in scoped apps. Framework mode already
-     * covers the normal paths; enable this only for an app that dodges it. Restart the app
-     * to apply.
+     * Per-app Settings spoof (default ON): the client-side hook on the static
+     * Settings.Global/Secure getters, installed in each scoped app. The safe, proven path.
+     * Restart the app to apply.
      */
     const val KEY_CLIENT_FALLBACK = "client_settings_fallback"
 

@@ -19,12 +19,9 @@
         <meta-data
             android:name="xposedminversion"
             android:value="93" />
-        <!-- Declared scope: System Framework (system_server) for framework mode. LSPosed
-             recommends it on enable so it's one tap and unambiguous. Add detector apps
-             manually for the per-app property spoof. -->
-        <meta-data
-            android:name="xposedscope"
-            android:resource="@array/module_scope" />
+        <!-- No xposedscope: the default per-app hook needs no System Framework scope. Do NOT
+             auto-scope system_server — framework mode (experimental) can bootloop it on some
+             ROMs, so scoping System Framework is a deliberate manual opt-in. -->
 
         <activity
             android:name=".MainActivity"

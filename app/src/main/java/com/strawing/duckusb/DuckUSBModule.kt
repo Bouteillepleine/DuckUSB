@@ -61,6 +61,9 @@ class DuckUSBModule : IXposedHookLoadPackage {
         /** SettingsProvider.call methods that fetch a value we may want to spoof. */
         private val GET_METHODS = setOf("GET_global", "GET_secure")
 
+        /** The concrete settings provider we hook (never the generic ContentProvider$Transport). */
+        private const val SETTINGS_PROVIDER = "com.android.providers.settings.SettingsProvider"
+
         /** Bundle keys used by the settings-provider call protocol. */
         private const val CALL_VALUE = "value"                 // Settings.NameValueTable.VALUE
         private const val CALL_GENERATION_INDEX = "_generation_index" // CALL_METHOD_GENERATION_INDEX_KEY
@@ -89,19 +92,26 @@ class DuckUSBModule : IXposedHookLoadPackage {
         return prefs.getBoolean(Config.KEY_SPOOF_PROPS, true)
     }
 
-    /** Framework mode defaults ON; the client-side per-app fallback defaults OFF. */
+    /**
+     * Framework mode is EXPERIMENTAL and OFF by default: on some ROMs (verified OP15 /
+     * Android 16) hooking ContentProvider$Transport.call in system_server bootloops the
+     * device. The per-app client hook is the safe default.
+     */
     private fun frameworkModeOn(): Boolean {
         prefs.reload()
-        return prefs.getBoolean(Config.KEY_FRAMEWORK_MODE, true)
+        return prefs.getBoolean(Config.KEY_FRAMEWORK_MODE, false)
     }
 
     private fun clientFallbackOn(): Boolean {
         prefs.reload()
-        return prefs.getBoolean(Config.KEY_CLIENT_FALLBACK, false)
+        return prefs.getBoolean(Config.KEY_CLIENT_FALLBACK, true)
     }
 
-    /** Carries the binder caller UID from before→after of Transport.call (per thread). */
+    /** Carries the binder caller UID from before→after of SettingsProvider.call (per thread). */
     private val txnCallerUid = ThreadLocal<Int>()
+
+    /** One-shot guard so we hook SettingsProvider.call only once. */
+    private var sSettingsCallHooked = false
 
     override fun handleLoadPackage(lpparam: XC_LoadPackage.LoadPackageParam) {
         val pkg = lpparam.packageName
@@ -180,26 +190,53 @@ class DuckUSBModule : IXposedHookLoadPackage {
     // ================= A0) FRAMEWORK-MODE SETTINGS SPOOF (system_server) =================
 
     /**
-     * Server-side settings spoof: hook the provider transport that every ContentResolver.call
-     * funnels through in system_server, so a single System-Framework hook lies to all apps at
-     * once — catching even callers that use ContentResolver.call/reflection directly (which the
-     * client-side getter hook misses). We deliberately run this ONLY in system_server and gate
-     * per-caller by UID, so shell/system keep reading the real state and adb stays functional.
+     * Server-side settings spoof, done the SAFE way (AdbHide-style): hook
+     * ContentProvider.attachInfo, wait for the concrete SettingsProvider to attach, then hook
+     * ONLY its call(). We deliberately do NOT hook the generic ContentProvider$Transport.call —
+     * that fires on every provider IPC in system_server on the hottest boot path and BOOTLOOPS
+     * some ROMs (verified OP15 / Android 16). Gated per-caller by UID so shell/system keep the
+     * real state and adb stays functional.
      */
     private fun installFrameworkSettingsSpoof(cl: ClassLoader) {
-        val transport = XposedHelpers.findClassIfExists("android.content.ContentProvider\$Transport", cl)
-        if (transport == null) {
-            XposedBridge.log("$TAG: ContentProvider\$Transport not found; framework mode disabled")
+        val cp = XposedHelpers.findClassIfExists("android.content.ContentProvider", cl)
+        if (cp == null) {
+            XposedBridge.log("$TAG: ContentProvider not found; framework mode disabled")
             return
         }
         try {
-            // hookAllMethods handles the per-Android-version signature drift of Transport.call
-            // (AttributionSource form on S+, callingPkg forms on Q/R).
-            XposedBridge.hookAllMethods(transport, "call", frameworkCallHook)
-            XposedBridge.log("$TAG: framework settings spoof installed on Transport.call")
+            XposedHelpers.findAndHookMethod(cp, "attachInfo",
+                "android.content.Context", "android.content.pm.ProviderInfo",
+                object : XC_MethodHook() {
+                    override fun afterHookedMethod(param: MethodHookParam) {
+                        try {
+                            val provider = param.thisObject ?: return
+                            if (provider.javaClass.name == SETTINGS_PROVIDER) {
+                                hookSettingsProviderCall(provider.javaClass)
+                            }
+                        } catch (_: Throwable) {}
+                    }
+                })
+            XposedBridge.log("$TAG: framework mode armed — hooked ContentProvider.attachInfo (awaiting SettingsProvider)")
         } catch (t: Throwable) {
-            XposedBridge.log("$TAG: framework settings spoof hook failed: $t")
+            XposedBridge.log("$TAG: framework settings spoof (attachInfo) failed: $t")
         }
+    }
+
+    /** Reflectively hook only SettingsProvider.call (>=3 params). One-shot. */
+    private fun hookSettingsProviderCall(spClass: Class<*>) {
+        if (sSettingsCallHooked) return
+        var count = 0
+        for (m in spClass.declaredMethods) {
+            try {
+                if (m.name == "call" && m.parameterTypes.size >= 3) {
+                    m.isAccessible = true
+                    XposedBridge.hookMethod(m, frameworkCallHook)
+                    count++
+                }
+            } catch (_: Throwable) {}
+        }
+        if (count > 0) sSettingsCallHooked = true
+        XposedBridge.log("$TAG: framework settings spoof installed: SettingsProvider.call hooks=$count")
     }
 
     private val frameworkCallHook = object : XC_MethodHook() {
@@ -214,9 +251,8 @@ class DuckUSBModule : IXposedHookLoadPackage {
                 // Only real apps get lied to; root/system/shell (uid<10000 in any user) see truth.
                 if (uid % 100000 < FIRST_APP_UID) return
 
-                // Cheap match FIRST (this fires on every provider call in system_server): the
-                // setting key always immediately follows the GET_* method arg, whatever the
-                // Transport.call signature is on this Android version.
+                // The setting key always immediately follows the GET_* method arg, whatever the
+                // SettingsProvider.call signature is on this Android version.
                 val args = param.args ?: return
                 var key: String? = null
                 for (i in 0 until args.size - 1) {

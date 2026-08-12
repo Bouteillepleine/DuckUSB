@@ -13,18 +13,18 @@ Settings.Global.getInt(cr, "development_settings_enabled")  // Developer Options
 Settings.Secure.getInt(cr, "adb_enabled")                  // legacy (pre-4.2) location
 ```
 
-By default DuckUSB does this in **framework mode**: a single hook in **System Framework**
-(system_server) on `android.content.ContentProvider$Transport.call` — the server-side
-chokepoint every `ContentResolver.call` funnels through — rewrites the result for those
-keys for **every** app at once, so you don't scope detectors one by one. It's gated by the
-caller's UID: only real apps (UID ≥ 10000) are lied to, never shell or system, so `adbd`
-and the Settings toggle keep seeing the truth and `adb` still works for you. It also resets
-the reply's `_generation_index` to `-1` so the client-side settings cache can't serve a
-stale real value. Every other setting passes through untouched.
+By default DuckUSB hooks the static getters on `android.provider.Settings$Global` and
+`android.provider.Settings$Secure` inside each **scoped** app. When the requested key is one
+of the three above it returns the "off" value (`0` / `"0"`); every other setting passes
+through untouched, and the device keeps debugging genuinely enabled so `adb` still works.
 
-A per-app **client-side fallback** (hooks the static getters on `Settings$Global` /
-`Settings$Secure` inside a scoped app) is included but **off by default** — enable it only
-for an app that somehow dodges framework mode.
+There is also an **experimental "framework mode"** — a single hook in System Framework
+(system_server) on `ContentProvider$Transport.call` that would spoof those keys for every
+app at once, no per-app scope. **⚠️ It is OFF by default and not recommended:** on some ROMs
+(verified OnePlus 15 / Android 16) hooking `Transport.call` in system_server **bootloops the
+device**. If you want to try it, scope **System Framework** manually and enable the toggle at
+your own risk; recover from a bootloop with root `adb` (disable the module) or LSPosed safe
+mode.
 
 ## Hiding the notification
 

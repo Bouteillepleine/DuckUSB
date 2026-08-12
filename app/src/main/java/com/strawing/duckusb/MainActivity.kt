@@ -134,7 +134,7 @@ class MainActivity : AppCompatActivity() {
             })
             addView(TextView(this@MainActivity).apply {
                 text = if (active) "Hooks are live in this process"
-                       else "Enable DuckUSB in LSPosed, then scope System Framework"
+                       else "Enable DuckUSB in LSPosed, then scope your apps"
                 setTextColor(fg); alpha = 0.9f
                 setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
             })
@@ -198,13 +198,13 @@ class MainActivity : AppCompatActivity() {
         col.addView(toggleRow("🔌", "Spoof USB debugging",
             "adb_enabled · adb_wifi_enabled · Developer Options → off", Config.KEY_SPOOF))
         col.addView(thinDivider())
-        col.addView(toggleRow("🛡️", "Framework mode (recommended)",
-            "One System-Framework hook spoofs Settings for every app — no per-app scope (reboot to apply)",
-            Config.KEY_FRAMEWORK_MODE))
+        col.addView(toggleRow("🎯", "Per-app Settings spoof",
+            "Hooks Settings getters in each scoped app — the default, safe path (restart app)",
+            Config.KEY_CLIENT_FALLBACK, default = true))
         col.addView(thinDivider())
-        col.addView(toggleRow("🎯", "Per-app Settings fallback",
-            "Legacy client-side hook; enable only for an app that dodges framework mode (restart app)",
-            Config.KEY_CLIENT_FALLBACK, default = false))
+        col.addView(toggleRow("🧪", "Framework mode (experimental)",
+            "One System-Framework hook for every app. ⚠️ Can BOOTLOOP system_server on some ROMs — scope System Framework manually, then reboot at your own risk.",
+            Config.KEY_FRAMEWORK_MODE, default = false))
         col.addView(thinDivider())
         col.addView(toggleRow("🔕", "Hide \"USB debugging\" notification",
             "Needs System Framework + System UI in scope", Config.KEY_HIDE_NOTIF))
@@ -262,10 +262,10 @@ class MainActivity : AppCompatActivity() {
                 text = "💡"; setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f); setPadding(0, 0, dp(10), 0)
             })
             addView(TextView(this@MainActivity).apply {
-                text = "In LSPosed → DuckUSB → Scope, tick System Framework + System UI — that alone " +
-                    "covers the Settings spoof (framework mode) for every app plus the notification. " +
-                    "Only add individual apps if you also need the system-property spoof for them. " +
-                    "Reboot after scoping System Framework; force-stop an app after scoping it."
+                text = "In LSPosed → DuckUSB → Scope, tick your detector apps (banking, Intune, games) " +
+                    "for the spoof, and System Framework + System UI if you want the notification hidden. " +
+                    "Force-stop a target after changing scope. (Framework mode is experimental — it can " +
+                    "bootloop system_server on some ROMs, so leave it off unless you know your ROM is safe.)"
                 setTextColor(cOnSurfaceVar)
                 setTextSize(TypedValue.COMPLEX_UNIT_SP, 12.5f)
             })
