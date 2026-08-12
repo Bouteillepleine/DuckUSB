@@ -19,8 +19,12 @@
         <meta-data
             android:name="xposedminversion"
             android:value="93" />
-        <!-- No xposedscope array on purpose: pick the detector apps yourself in the
-             LSPosed manager (banking, Intune, games, …). -->
+        <!-- Declared scope: System Framework (system_server) for framework mode. LSPosed
+             recommends it on enable so it's one tap and unambiguous. Add detector apps
+             manually for the per-app property spoof. -->
+        <meta-data
+            android:name="xposedscope"
+            android:resource="@array/module_scope" />
 
         <activity
             android:name=".MainActivity"
@@ -28,6 +32,10 @@
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="de.robv.android.xposed.category.MODULE_SETTINGS" />
             </intent-filter>
         </activity>
     </application>

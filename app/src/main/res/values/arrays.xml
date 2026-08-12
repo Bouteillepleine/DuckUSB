@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!--
+      Declared scope so LSPosed recommends System Framework on enable (framework mode
+      lives in system_server). "android" is the framework package name; "system" is the
+      token some LSPosed builds store for System Framework — declaring both removes the
+      ambiguity that left the module unscoped there.
+    -->
+    <string-array name="module_scope">
+        <item>android</item>
+        <item>system</item>
+    </string-array>
+</resources>
