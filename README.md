@@ -2,124 +2,97 @@
 
 [![Build APK](https://github.com/Bouteillepleine/DuckUSB/actions/workflows/build.yml/badge.svg)](https://github.com/Bouteillepleine/DuckUSB/actions/workflows/build.yml)
 
-An LSPosed / Xposed module that makes apps read **USB debugging as OFF while it stays really ON** on the device — same for wireless debugging and the Developer Options master toggle. It also spoofs the raw USB system properties, and can hide the persistent *"USB debugging enabled"* notification.
+An LSPosed / Xposed module that makes apps read **USB debugging as OFF while it stays really ON** — same for wireless debugging and Developer Options. It also spoofs the raw USB system properties and can hide the persistent *"USB debugging enabled"* notification.
 
-Detection apps (banking, MDM/Intune, games, integrity checks) don't read any real "adb" state — they query the settings provider:
+Detection apps (banking, MDM, games, integrity checks) don't read any real adb state — they query the settings provider:
 
 ```
 Settings.Global.getInt(cr, "adb_enabled")                   // USB debugging
-Settings.Global.getInt(cr, "adb_wifi_enabled")              // wireless / ADB-over-Wi-Fi
+Settings.Global.getInt(cr, "adb_wifi_enabled")              // wireless debugging
 Settings.Global.getInt(cr, "development_settings_enabled")  // Developer Options
 ```
 
-## Two ways to spoof settings — pick one
-
-**Framework mode (recommended).** One hook in `system_server` covers **every app at once**, with no per-app scope. DuckUSB hooks `ContentProvider.attachInfo`, waits for the settings provider to attach (matched by its **authority**, so ROMs that subclass `SettingsProvider` still work), then hooks only that provider's `call()`. Results are rewritten per caller, gated on `Binder.getCallingUid()`, and `_generation_index` is set to `-1` so the client-side settings cache can't serve a stale real value.
-
-Callers at **uid < 10000** (root / system / shell) always see the truth, so `adb` and the Settings toggle keep working. OS file-transfer plumbing is spared too — see below.
-
-**Per-app mode.** The original client-side hook on the static `Settings.Global` / `Settings.Secure` getters, installed inside each scoped app. Still supported for cases where you don't want `system_server` touched at all.
-
-The two are **mutually exclusive** and the UI enforces it: framework mode already covers everything per-app mode would, and per-app short-circuits reads inside the app so the framework hook never sees them — which would blank those callers from the diagnostics.
-
-## Diagnostics — knowing it actually works
-
-Framework mode publishes a small binder service inside `system_server`. The app fetches it by calling the settings provider with a private method name, gated on the caller's app id; on any mismatch the hook does nothing, so the call is indistinguishable from stock. It is never registered with `ServiceManager`.
-
-That gives the app a **Framework service** card showing the service version, how many `SettingsProvider.call` hooks are installed, how long ago, and a **list of every caller that was lied to since boot** with per-key counts. Without this, a mis-scoped module looks identical to a working one — which is the single most confusing failure this module has.
-
-Config changes also push over the binder, so toggles apply to `system_server` **immediately**, with no reboot.
-
-## Spoofing the system properties
-
-Some detectors skip the settings provider and read the raw USB/adb **system properties**, either through `android.os.SystemProperties` or by calling libc directly. DuckUSB spoofs those too, at two levels:
-
-- **Java** — hooks `android.os.SystemProperties.native_get*`.
-- **Native** — `libduckusb.so` inline-hooks `__system_property_get` and `__system_property_find`, catching native code and the modern `SystemProperties.get()` path that the Java hook alone would miss. Installed once per process; the override map is published lock-free so a property read from inside the hook can't deadlock.
-
-This is **automatic in every scoped non-core app** — there is no toggle. Scoping an app already states the intent, and the app cannot read LSPosed's scope to gate a switch honestly.
-
-⚠️ **Property reads are process-local**, so no `system_server` hook can reach them. This half is inherently per-app: it only works in apps you scope.
-
-## Never lied to
-
-Three independent guards, each covering a gap the others miss:
-
-- **uid** — anything below 10000 is OS.
-- **process name** — `android`, `system`, `com.android.systemui`, `com.android.settings`, `com.android.shell`, `com.android.phone`.
-- **package name** — the same core list, for plain per-app cases.
-
-The process guard matters more than it looks. `handleLoadPackage` fires **once per package hosted in a process**, not once per process: with the `system` scope, `system_server` reports `android`, `com.android.providers.settings`, `com.android.location.fused`, `com.android.server.telecom` and others, all at uid 1000. A package-name check catches only the first. Some ROMs also load plugins into the SystemUI process under their own package names at an app uid.
-
-Getting this wrong is not cosmetic: telling `system_server` that `sys.usb.ffs.ready=0` takes the whole USB gadget down — no MTP **and** no adb.
-
-OS file-transfer components are spared from both the settings and property spoof, because they run at **app** uids and the uid guard doesn't reach them: `com.android.mtp`, `com.android.externalstorage`, `com.android.storagemanager`, `com.android.sharedstoragebackup`, and the OnePlus/OPlus file managers. See `SPARE_PACKAGES` in [`Config.kt`](app/src/main/java/com/strawing/duckusb/Config.kt).
-
 ## Install
 
-1. Build (`./gradlew :app:assembleRelease`) or grab the APK from the CI artifact / releases.
-2. Install it and enable **DuckUSB** in LSPosed.
-3. LSPosed → DuckUSB → **Scope**:
-   - **"Cadre du sous-système" / package `system`** — this is the entry that injects into `system_server`. Framework mode needs it.
-     ⚠️ **Not** "Système Android" / package `android` — that one does *not* inject into `system_server`, and picking it gives you a module that looks enabled and does nothing.
-   - **System UI** — for the notification hider.
-   - Individual apps — only if you want the **system-property** spoof for them.
-4. **Reboot** after scoping. Force-stop an individual app after scoping it.
+1. Install the APK and enable **DuckUSB** in LSPosed.
+2. LSPosed → DuckUSB → **Scope**, tick the entry whose package is **`system`** — that is the one that injects into `system_server`, and framework mode needs it.
+   > ⚠️ **Not** the entry whose package is `android`. That one does *not* inject into `system_server`; picking it gives you a module that looks enabled and silently does nothing. The module ships an `xposedscope` recommendation so LSPosed highlights the right entries.
+3. Also tick **System UI** if you want the notification hidden, and any individual apps you want the property spoof for.
+4. **Reboot.** Force-stop an individual app after scoping it.
 
-The module declares an `xposedscope` recommendation so LSPosed highlights the right entries.
+## Two ways to spoof settings
+
+**Framework mode (recommended)** — one hook in `system_server` covers every app, no per-app scope. Hooks `ContentProvider.attachInfo`, waits for the settings provider (matched by **authority**, so ROMs that subclass `SettingsProvider` still work), then hooks only that provider's `call()`. Results are rewritten per caller by `Binder.getCallingUid()`, with `_generation_index = -1` so the client settings cache can't serve a stale real value.
+
+**Per-app mode** — the client-side hook on the static `Settings.Global` / `Settings.Secure` getters inside each scoped app. For when you don't want `system_server` touched at all.
+
+The two are mutually exclusive and the UI enforces it: framework mode already covers everything per-app would, and per-app short-circuits reads inside the app, hiding those callers from the diagnostics.
+
+Callers at **uid < 10000** (root / system / shell) always see the truth, so `adb` and the Settings toggle keep working.
+
+## Diagnostics
+
+Framework mode publishes a small binder service in `system_server`, fetched by calling the settings provider with a private method name gated on the caller's app id. On any mismatch the hook does nothing, so the call is indistinguishable from stock. It is never registered with `ServiceManager`.
+
+The app then shows the hook count, uptime, and **every caller lied to since boot** with per-key counts. Without it, a mis-scoped module looks identical to a working one. Toggles also push over this binder and apply immediately, no reboot.
+
+## System properties
+
+Some detectors skip the settings provider and read the raw properties. DuckUSB hooks `SystemProperties.native_get*` and, natively, `__system_property_get` / `__system_property_find` (`libduckusb.so`) to catch the paths the Java hook alone would miss.
+
+**Automatic in every scoped non-core app** — no toggle. Property reads are process-local, so no `system_server` hook can reach them; this half only works in apps you scope.
+
+## Core processes are never lied to
+
+Three guards, each covering a gap the others miss:
+
+- **uid** — anything below 10000 is OS
+- **process name** — `android`, `system`, `com.android.systemui`, `com.android.settings`, `com.android.shell`, `com.android.phone`
+- **package name** — the same list, for plain per-app cases
+
+The process guard matters: `handleLoadPackage` fires once per package *hosted* in a process, not once per process. With the `system` scope, `system_server` reports `android`, `com.android.providers.settings`, `com.android.location.fused`, `com.android.server.telecom` and more — all at uid 1000 — so a package-name check catches only the first.
+
+This is not cosmetic. Telling `system_server` that `sys.usb.ffs.ready=0` takes the USB gadget down entirely: no MTP **and** no adb.
+
+OS file-transfer components run at *app* uids, so the uid guard misses them; they're spared explicitly via `SPARE_PACKAGES` in [`Config.kt`](app/src/main/java/com/strawing/duckusb/Config.kt) — `com.android.mtp`, `com.android.externalstorage`, `com.android.storagemanager`, `com.android.sharedstoragebackup` and the OnePlus/OPlus file managers.
 
 ## Toggles
 
-- **Pause** — master switch, ANDed over everything else. Pushes live to `system_server`, so it stops spoofing immediately. It does **not** uninstall hooks or unload the native library — those are fixed at process load. LSPosed's own switch is the real off.
-- **Spoof USB debugging** — the `adb_enabled` / `adb_wifi_enabled` / Developer Options lie.
-- **Framework mode** — server-side spoof (needs the `system` scope + reboot).
-- **Per-app Settings spoof** — client-side fallback; greyed out while framework mode is on.
-- **Hide "USB debugging" notification** — the `system_server` / System UI suppressor, matching by channel (`DEVELOPER` / `DEVELOPER_IMPORTANT`) and by the ROM's own localized title strings, resolved live so any language matches.
-- **Verbose logging** — one LSPosed line per injection (package / process / uid / guards). Off by default; turn it on when a hook won't install.
+| Toggle | What it does |
+|---|---|
+| **Pause** | Master switch, pushed live. Does *not* uninstall hooks — LSPosed's own switch is the real off. |
+| **Spoof USB debugging** | The `adb_enabled` / `adb_wifi_enabled` / Developer Options lie. |
+| **Framework mode** | Server-side spoof. Needs the `system` scope + reboot. |
+| **Per-app Settings spoof** | Client-side fallback; greyed out while framework mode is on. |
+| **Hide notification** | Suppressor in `system_server` / System UI, matched by channel and by the ROM's own localized title strings. |
+| **Verbose logging** | One log line per injection (package / process / uid / guards). Off by default. |
 
-Hook *installation* follows the toggles, not just hook bodies — enabling one feature places that feature's hooks and nothing else.
+Hook *installation* follows the toggles, so enabling one feature places that feature's hooks and nothing else.
 
-## Spoofed keys
+## Spoofed values
 
-| Key | Meaning | Forced value |
-|-----|---------|--------------|
-| `adb_enabled` | USB debugging | `0` |
-| `adb_wifi_enabled` | Wireless debugging | `0` |
-| `development_settings_enabled` | Developer Options | `0` |
+| Setting | Forced |
+|---|---|
+| `adb_enabled` | `0` |
+| `adb_wifi_enabled` | `0` |
+| `development_settings_enabled` | `0` |
 
-Edit `SPOOF_KEYS` in [`DuckUSBModule.kt`](app/src/main/java/com/strawing/duckusb/DuckUSBModule.kt).
+| Property | Forced |
+|---|---|
+| `sys.usb.config` | `mtp` |
+| `sys.usb.state` | `mtp` |
+| `init.svc.adbd` | `stopped` |
 
-## Spoofed properties
-
-| Property | Meaning | Forced value |
-|----------|---------|--------------|
-| `sys.usb.config` | Current USB function config | `mtp` |
-| `sys.usb.state` | Current USB state | `mtp` |
-| `init.svc.adbd` | adbd service state | `stopped` |
-
-`sys.usb.ffs.ready` is **deliberately not spoofed** — it's the USB function-filesystem *ready* flag, machinery the USB stack acts on rather than telemetry a detector reads. `persist.sys.usb.config` is excluded as persisted / boot-influencing. Edit `PROP_OVERRIDES` in [`Config.kt`](app/src/main/java/com/strawing/duckusb/Config.kt).
+`sys.usb.ffs.ready` is deliberately **not** spoofed — it's the USB function-filesystem ready flag, machinery the USB stack acts on rather than telemetry detectors read. `persist.sys.usb.config` is excluded as persisted / boot-influencing. Lists live in `SPOOF_KEYS` ([`DuckUSBModule.kt`](app/src/main/java/com/strawing/duckusb/DuckUSBModule.kt)) and `PROP_OVERRIDES` ([`Config.kt`](app/src/main/java/com/strawing/duckusb/Config.kt)).
 
 ## Tested on
 
-OnePlus 15 (CPH2747) / OxygenOS / Android 16, LSPosed + KernelSU. Framework mode is verified there and nowhere else — other ROMs are unknown, though the hook matches the settings provider by authority and the guards key off uid and process name rather than OEM-specific package names.
+OnePlus 15 (CPH2747) / OxygenOS / Android 16, LSPosed + KernelSU. Framework mode is verified there and nowhere else — other ROMs are unknown, though the provider is matched by authority and the guards key off uid and process name rather than OEM-specific package names.
 
-## CI
+## Build & CI
 
-`.github/workflows/build.yml` builds a release APK on every push / PR and uploads it as the **DuckUSB-release** artifact. Signing material is **not** in the repo — CI reconstructs the keystore from repository secrets:
+- JDK 21, NDK `27.2.12479018` (override locally with `-PduckusbNdk=<version>`), `./gradlew :app:assembleRelease`
+- CI builds a signed release APK on every push and uploads it as **DuckUSB-release**. Keystore comes from repository secrets: `DUCKUSB_KEYSTORE_BASE64`, `DUCKUSB_STORE_PASSWORD`, `DUCKUSB_KEY_ALIAS`, `DUCKUSB_KEY_PASSWORD`. Forks without them still build, just unsigned.
+- Local builds can use a git-ignored `key.properties` (`storeFile` / `storePassword` / `keyAlias` / `keyPassword`), which takes precedence over the env vars.
 
-- `DUCKUSB_KEYSTORE_BASE64` — `base64 -w0` of the release `.jks`
-- `DUCKUSB_STORE_PASSWORD`, `DUCKUSB_KEY_ALIAS`, `DUCKUSB_KEY_PASSWORD`
-
-A fork without these secrets still builds; the release APK just comes out unsigned. For local builds, drop a git-ignored `key.properties` (`storeFile` / `storePassword` / `keyAlias` / `keyPassword`) next to the project — `app/build.gradle.kts` prefers it and falls back to the CI env vars otherwise.
-
-### Signing identity
-
-**CI signs with the same key as the published releases**, so any CI artifact installs as an in-place update over a release build and vice versa.
-
-That matters more than it sounds: Android identifies an app by its signature, so a build signed with a different key cannot update an installed one — users have to uninstall first and lose their config, and their LSPosed enable/scope with it. If the signing key is ever rotated, every already-published install is stranded. Keep CI and releases on one key unless you intend that break.
-
-## Build
-
-- JDK 21 (Android Studio JBR). `gradle.properties` pins `org.gradle.java.home`.
-- NDK `27.2.12479018` (pinned via `android.ndkVersion`) for the native `libduckusb.so`; override locally with `-PduckusbNdk=<version>`.
-- `./gradlew :app:assembleRelease`
+**Signing identity:** CI signs with the same key as the published releases, so any CI artifact installs in place over a release and vice versa. Android identifies an app by its signature — a build signed with a different key cannot update an installed one, so users would have to uninstall and lose their LSPosed enable/scope. Don't rotate the key unless you intend that break.
