@@ -112,6 +112,12 @@ OnePlus 15 (CPH2747) / OxygenOS / Android 16, LSPosed + KernelSU. Framework mode
 
 A fork without these secrets still builds; the release APK just comes out unsigned. For local builds, drop a git-ignored `key.properties` (`storeFile` / `storePassword` / `keyAlias` / `keyPassword`) next to the project — `app/build.gradle.kts` prefers it and falls back to the CI env vars otherwise.
 
+### Signing identity
+
+**CI signs with the same key as the published releases**, so any CI artifact installs as an in-place update over a release build and vice versa.
+
+That matters more than it sounds: Android identifies an app by its signature, so a build signed with a different key cannot update an installed one — users have to uninstall first and lose their config, and their LSPosed enable/scope with it. If the signing key is ever rotated, every already-published install is stranded. Keep CI and releases on one key unless you intend that break.
+
 ## Build
 
 - JDK 21 (Android Studio JBR). `gradle.properties` pins `org.gradle.java.home`.
