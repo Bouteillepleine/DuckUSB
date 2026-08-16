@@ -19,9 +19,13 @@
         <meta-data
             android:name="xposedminversion"
             android:value="93" />
-        <!-- No xposedscope: the default per-app hook needs no System Framework scope. Do NOT
-             auto-scope system_server — framework mode (experimental) can bootloop it on some
-             ROMs, so scoping System Framework is a deliberate manual opt-in. -->
+        <!-- Recommends "system" (the entry that injects into system_server), "android" and
+             System UI. LSPosed only marks these as recommended — it does not tick them — so
+             framework mode remains a deliberate opt-in requiring a manual scope + reboot.
+             See res/values/arrays.xml. -->
+        <meta-data
+            android:name="xposedscope"
+            android:resource="@array/module_scope" />
 
         <activity
             android:name=".MainActivity"

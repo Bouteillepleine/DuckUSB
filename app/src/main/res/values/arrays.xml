@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!--
+      Scope recommendation shown by LSPosed. "system" is the entry that actually injects into
+      system_server — "android" does not — and that distinction is why framework mode silently
+      failed to load for a long time: it was scoped to android, so the hook never installed and
+      the module looked broken rather than unscoped.
+
+      LSPosed only *recommends* these; it does not scope them for you, so framework mode still
+      requires a deliberate tick plus a reboot. Recommending them just stops people ticking the
+      wrong one.
+    -->
+    <string-array name="module_scope">
+        <item>system</item>
+        <item>android</item>
+        <item>com.android.systemui</item>
+    </string-array>
+</resources>

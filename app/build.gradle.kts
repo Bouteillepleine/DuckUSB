@@ -24,6 +24,9 @@ val hasSigning: Boolean =
 android {
     compileSdk = 35
     namespace = "com.strawing.duckusb"
+
+    // IDuckService.aidl — the system_server <-> UI channel.
+    buildFeatures { aidl = true }
     // CI pins 27.2.12479018 (installed via sdkmanager). Local builds can override with
     // -PduckusbNdk=<installed-version> without touching the committed CI value.
     ndkVersion = (findProperty("duckusbNdk") as String?) ?: "27.2.12479018"
@@ -32,8 +35,8 @@ android {
         applicationId = "com.strawing.duckusb"
         minSdk = 26
         targetSdk = 35
-        versionCode = 5
-        versionName = "1.2.2"
+        versionCode = 6
+        versionName = "1.3.0"
         vectorDrawables { useSupportLibrary = true }
         ndk {
             abiFilters += listOf("armeabi-v7a", "arm64-v8a", "x86", "x86_64")
