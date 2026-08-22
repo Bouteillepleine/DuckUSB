@@ -67,6 +67,8 @@ This is not cosmetic. Telling `system_server` that `sys.usb.ffs.ready=0` takes t
 
 OS file-transfer components run at *app* uids, so the uid guard misses them; they're spared explicitly via `SPARE_PACKAGES` in [`Config.kt`](app/src/main/java/com/strawing/duckusb/Config.kt) — `com.android.mtp`, `com.android.externalstorage`, `com.android.storagemanager`, `com.android.sharedstoragebackup` and the OnePlus/OPlus file managers.
 
+`com.oplus.ota` is spared for a different reason: its `EntryActivity.onCreateOptionsMenu` removes the **Local install** entry outright when `development_settings_enabled` reads 0, so spoofing it hides a feature you need rather than a signal a detector wants.
+
 ## Toggles
 
 | Toggle | What it does |
