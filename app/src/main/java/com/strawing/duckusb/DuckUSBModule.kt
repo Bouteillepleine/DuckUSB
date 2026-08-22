@@ -197,7 +197,13 @@ class DuckUSBModule : IXposedHookLoadPackage {
         //   package   — the original list, kept for the plain per-app cases
         val isSystemProcess = android.os.Process.myUid() % 100000 < FIRST_APP_UID
         val inCoreProcess = (lpparam.processName ?: pkg) in SKIP_SPOOF_PROCESSES
-        if (pkg !in SKIP_SPOOF_PACKAGES && !isSystemProcess && !inCoreProcess) {
+        // ...and never in DuckUSB itself. LSPosed loads a module into its own process whether
+        // or not you scope it, so without this the UI spoofs itself: the readings card, which
+        // exists to report the REAL device state, reads its own lie and shows adb_enabled=0 /
+        // sys.usb.state=mtp on every device regardless of the truth. The native half is worse
+        // than dishonest — the libc inline hook is what SIGILLs the UI on some ROMs (issue #2).
+        val isSelf = pkg == Config.PKG || (lpparam.processName ?: pkg).substringBefore(':') == Config.PKG
+        if (pkg !in SKIP_SPOOF_PACKAGES && !isSystemProcess && !inCoreProcess && !isSelf) {
             if (clientFallbackOn()) installSettingsSpoof(cl)
             // A2) Property spoof — same scope. Closes the gap where a detector reads the
             //     raw sys.usb.* / init.svc.adbd props instead of the Settings provider.

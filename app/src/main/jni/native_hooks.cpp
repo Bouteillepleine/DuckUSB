@@ -104,11 +104,22 @@ Java_com_strawing_duckusb_NativeProps_setProps(JNIEnv *env, jobject /*thiz*/, jo
     LOGD("setProps: %zu overrides published", next->size());  // safe: no lock held
 }
 
-// Defence-in-depth: never install the libc hooks in core OS processes (mirrors the
-// Kotlin SKIP_SPOOF_PACKAGES). The lock-free hooks are already safe with an empty map,
-// but not touching libc at all in system_server / SystemUI removes any footprint there.
+// Our own package. LSPosed loads a module into its own app process unconditionally — that
+// is not something the scope list can turn off — so DuckUSB's UI always gets native_init.
+// Hooking libc there is pure downside: nothing in our own process should be lied to (the
+// readings card exists to show the REAL device state), and an inline hook on a hot libc
+// entry point is the one thing in this process that can kill it. That is issue #2: on a
+// Nothing A065 / Android 16 build the very first property read off the EmojiCompatInit
+// thread landed in the trampoline and took SIGILL (ILL_ILLOPC), so the UI died seconds
+// after launch — in a process that never needed the hook in the first place.
+static const char kOwnPackage[] = "com.strawing.duckusb";
+
+// Defence-in-depth: never install the libc hooks in our own UI, nor in core OS processes
+// (mirrors the Kotlin SKIP_SPOOF_PACKAGES). The lock-free hooks are already safe with an
+// empty map, but not touching libc at all removes both the crash surface here and any
+// footprint in system_server / SystemUI.
 // Fails safe: if the process name can't be read (very early load), we DON'T skip.
-static bool is_core_os_process() {
+static bool should_skip_hooks(const char **reason) {
     char cmd[128] = {0};
     int fd = open("/proc/self/cmdline", O_RDONLY | O_CLOEXEC);  // raw syscall, no FILE lock
     if (fd < 0) return false;
@@ -116,26 +127,46 @@ static bool is_core_os_process() {
     close(fd);
     if (n <= 0) return false;
     cmd[n] = '\0';  // first NUL-separated token is the process name
+
+    // A private sub-process reports "<package>:<name>"; compare on the package half so
+    // com.strawing.duckusb:anything is covered too. strchr stops at the token's NUL.
+    char *colon = strchr(cmd, ':');
+    if (colon) *colon = '\0';
+
+    if (strcmp(cmd, kOwnPackage) == 0) {
+        *reason = "own process";
+        return true;
+    }
     static const char *core[] = {
         "system_server", "android",
         "com.android.systemui", "com.android.settings",
         "com.android.shell", "com.android.phone",
     };
-    for (const char *c : core) if (strcmp(cmd, c) == 0) return true;
+    for (const char *c : core) {
+        if (strcmp(cmd, c) == 0) {
+            *reason = "core OS process";
+            return true;
+        }
+    }
     return false;
 }
 
 extern "C" [[gnu::visibility("default")]] [[gnu::used]]
 NativeOnModuleLoaded native_init(const NativeAPIEntries *entries) {
-    if (is_core_os_process()) {
-        LOGD("native_init: core OS process, skipping libc hooks");
+    const char *reason = "";
+    if (should_skip_hooks(&reason)) {
+        LOGD("native_init: %s, skipping libc hooks", reason);
         return [](const char *name, void *handle) {};
     }
     LOGD("native_init");
     HookFunType hook = entries->hook_func;
-    hook((void *) __system_property_get, (void *) hooked_system_property_get,
-         (void **) &orig_system_property_get);
-    hook((void *) __system_property_find, (void *) hooked_system_property_find,
-         (void **) &orig_system_property_find);
+    // Log the hooker's verdict. A failed inline hook is otherwise indistinguishable from a
+    // working one until a property read misbehaves, which is a miserable thing to debug from
+    // a crash report — see issue #2.
+    int rc_get = hook((void *) __system_property_get, (void *) hooked_system_property_get,
+                      (void **) &orig_system_property_get);
+    int rc_find = hook((void *) __system_property_find, (void *) hooked_system_property_find,
+                       (void **) &orig_system_property_find);
+    LOGD("native_init: hook rc get=%d find=%d", rc_get, rc_find);
     return [](const char *name, void *handle) {};
 }
