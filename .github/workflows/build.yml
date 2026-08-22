@@ -62,12 +62,10 @@ jobs:
           chmod +x gradlew
           ./gradlew :app:assembleRelease --no-daemon --stacktrace
 
-      - name: Verify APK (native lib present on all ABIs + symbols exported)
-        # Codifies the release checklist: every ABI ships libduckusb.so, and the lib
-        # exports the LSPosed entrypoint (native_init) and the JNI bridge (setProps).
-        # Uses here-strings (grep <<<) rather than `cmd | grep -q`: grep -q exits on the
-        # first match and closes the pipe, which under `pipefail` reports the producer's
-        # SIGPIPE as a failure even when the match succeeded.
+      - name: Verify APK (ABIs, entrypoints, hooked prop routes, self-skip guard)
+        # Codifies the release checklist. Uses here-strings (grep <<<) rather than
+        # `cmd | grep -q`: grep -q exits on the first match and closes the pipe, which under
+        # `pipefail` reports the producer's SIGPIPE as a failure even when the match succeeded.
         run: |
           set -euo pipefail
           APK=app/build/outputs/apk/release/app-release.apk
@@ -78,12 +76,38 @@ jobs:
               && echo "  ok: $abi" \
               || { echo "  MISSING: lib/$abi/libduckusb.so"; exit 1; }
           done
-          READELF=$(ls "$ANDROID_HOME"/ndk/"${NDK_VERSION}"/toolchains/llvm/prebuilt/*/bin/llvm-readelf | head -1)
+          TOOLS=$(dirname "$(ls "$ANDROID_HOME"/ndk/"${NDK_VERSION}"/toolchains/llvm/prebuilt/*/bin/llvm-readelf | head -1)")
           unzip -o -q "$APK" 'lib/arm64-v8a/libduckusb.so' -d _apkcheck
-          SYMS=$("$READELF" --dyn-syms _apkcheck/lib/arm64-v8a/libduckusb.so)
-          grep -q 'native_init' <<< "$SYMS" || { echo "native_init not exported"; exit 1; }
-          grep -q 'Java_com_strawing_duckusb_NativeProps_setProps' <<< "$SYMS" \
-            || { echo "setProps JNI not exported"; exit 1; }
+          SO=_apkcheck/lib/arm64-v8a/libduckusb.so
+          SYMS=$("$TOOLS/llvm-readelf" --dyn-syms "$SO")
+
+          echo "Checking exported entrypoints"
+          for sym in native_init Java_com_strawing_duckusb_NativeProps_setProps; do
+            grep -q "$sym" <<< "$SYMS" && echo "  ok: $sym exported" \
+              || { echo "  MISSING export: $sym"; exit 1; }
+          done
+
+          # Every public bionic route to a property value must still be referenced, or the
+          # spoof has silently gone partial. __system_property_get is the name route;
+          # _read_callback and _read are the two handle routes; _find resolves the handles
+          # that setProps caches. Dropping any one of these is how you get a property that
+          # reads spoofed one way and truthful another — which is a louder signal than not
+          # spoofing at all. (_read_callback resolves against LIBC_O, hence the loose match.)
+          echo "Checking bionic property routes are all covered"
+          for sym in __system_property_get __system_property_read_callback \
+                     __system_property_read __system_property_find; do
+            grep -qE "UND +${sym}@" <<< "$SYMS" && echo "  ok: $sym imported" \
+              || { echo "  MISSING import: $sym — a property read route is uncovered"; exit 1; }
+          done
+
+          # The self-skip guard that fixes issue #2: native_init must refuse to install libc
+          # hooks in DuckUSB's own process. If this literal disappears, the guard went with it
+          # and the UI is back to inline-hooking libc in a process that has no need of it.
+          echo "Checking self-skip guard"
+          grep -q 'com.strawing.duckusb' <<< "$("$TOOLS/llvm-strings" "$SO")" \
+            && echo "  ok: own-package guard string present" \
+            || { echo "  MISSING: own-package guard (see should_skip_hooks)"; exit 1; }
+
           echo "APK verification passed."
 
       - name: Upload APK
