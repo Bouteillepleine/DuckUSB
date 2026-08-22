@@ -42,6 +42,17 @@ Some detectors skip the settings provider and read the raw properties. DuckUSB h
 
 **Automatic in every scoped non-core app** — no toggle. Property reads are process-local, so no `system_server` hook can reach them; this half only works in apps you scope.
 
+## DuckUSB never lies to itself
+
+LSPosed loads a module into its own app process whether or not you scope it, so DuckUSB used to spoof its own UI. Two things were wrong with that. The readings card exists to report the **real** device state, and it was reading its own lie — `adb_enabled 0` and `init.svc.adbd stopped` on a device where they were `1` and `running`. Worse, `libduckusb.so` was inline-hooking libc in a process that had no reason to carry the hook: on a Nothing A065 / Android 16 build the first property read off the `EmojiCompatInit` thread hit the trampoline and took `SIGILL`, killing the app seconds after launch ([#2](https://github.com/Bouteillepleine/DuckUSB/issues/2)).
+
+Both halves now skip our own package:
+
+- **native** — `should_skip_hooks()` in [`native_hooks.cpp`](app/src/main/jni/native_hooks.cpp) refuses `com.strawing.duckusb` (and `:sub` processes) before installing anything. This is the one that matters: the hooks go in when the library loads, before any Kotlin gate runs.
+- **framework mode** — the `SettingsProvider.call` hook spares our own app id, since a client-side guard cannot stop a lie told inside `system_server`.
+
+Spoofing ourselves bought nothing — detectors are *other* apps — and cost the one screen meant to tell you the truth.
+
 ## Core processes are never lied to
 
 Three guards, each covering a gap the others miss:
