@@ -39,7 +39,7 @@ jobs:
         run: echo "y" | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "ndk;${NDK_VERSION}"
 
       - name: Set up Gradle
-        uses: gradle/actions/setup-gradle@v4
+        uses: gradle/actions/setup-gradle@v6
 
       - name: Decode signing keystore
         # The keystore is NOT in the repo. CI reconstructs it from a base64 secret and
@@ -114,7 +114,7 @@ jobs:
           echo "APK verification passed."
 
       - name: Upload APK
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: DuckUSB-release
           path: app/build/outputs/apk/release/app-release.apk
@@ -130,7 +130,7 @@ jobs:
       contents: write
     steps:
       - name: Download verified APK
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: DuckUSB-release
 
