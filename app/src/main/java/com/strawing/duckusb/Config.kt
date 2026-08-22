@@ -57,10 +57,12 @@ object Config {
      * omitted (persisted / boot-influencing; DuckUSB has always left it alone).
      */
     /**
-     * OS file-transfer plumbing that must never be lied to, by either the settings spoof or the
-     * property spoof. com.android.mtp is uid 10091 on OP15 — an app uid, so the "uid < 10000"
-     * sparing does not reach it. Telling the MTP service sys.usb.state=mtp / init.svc.adbd=stopped
-     * is how USB ends up stuck on charge-only.
+     * OS plumbing that must never be lied to, by either the settings spoof or the property
+     * spoof. com.android.mtp is uid 10091 on OP15 — an app uid, so the "uid < 10000" sparing
+     * does not reach it. Telling the MTP service sys.usb.state=mtp / init.svc.adbd=stopped is
+     * how USB ends up stuck on charge-only. com.oplus.ota is here for a different reason: its
+     * EntryActivity.onCreateOptionsMenu removes the "Local install" overflow entry outright
+     * when development_settings_enabled reads 0, so spoofing it hides a feature the user needs.
      */
     val SPARE_PACKAGES: Set<String> = setOf(
         "com.android.mtp",
@@ -69,6 +71,7 @@ object Config {
         "com.android.sharedstoragebackup",
         "com.oneplus.filemanager",
         "com.oplus.filemanager",
+        "com.oplus.ota",
     )
 
     val PROP_OVERRIDES: Map<String, String> = mapOf(
