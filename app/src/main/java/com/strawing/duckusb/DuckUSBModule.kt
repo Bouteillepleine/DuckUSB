@@ -364,6 +364,14 @@ class DuckUSBModule : IXposedHookLoadPackage {
                 // Only real apps get lied to; root/system/shell (uid<10000 in any user) see truth.
                 if (uid % 100000 < FIRST_APP_UID) return
 
+                // ...and never our own UI. The readings card exists to report the REAL device
+                // state, and the client-side self-guard cannot stop a lie told inside
+                // system_server: with framework mode on, DuckUSB read its own adb_enabled as 0
+                // on a device where it is 1. Spoofing ourselves buys nothing — detectors are
+                // other apps — and costs the one screen meant to tell the user the truth.
+                // appId is already resolved for the binder gate; -1 means unknown, so spoof.
+                service?.callerAppId?.let { if (it >= 0 && uid % 100000 == it) return }
+
                 // The setting key always immediately follows the GET_* method arg, whatever the
                 // SettingsProvider.call signature is on this Android version.
                 val args = param.args ?: return
