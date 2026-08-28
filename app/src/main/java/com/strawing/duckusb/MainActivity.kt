@@ -232,10 +232,17 @@ class MainActivity : AppCompatActivity() {
             loadedHere -> "Active — per-app only"
             else -> "Not active"
         }
+        // When framework mode is off, "framework mode not running" is not a fault to report —
+        // it is the configuration. Saying so anyway sent issue #4 chasing a scope that was
+        // already correct, so the per-app case now states what per-app actually requires.
+        val frameworkWanted = prefs.getBoolean(Config.KEY_FRAMEWORK_MODE, false)
         val detail = when {
             paused -> "All spoofing stopped. Hooks stay loaded until reboot; LSPosed's switch is the real off."
             frameworkLive -> "Hook live in system_server, covering every app"
-            loadedHere -> "Loaded in this process. Framework mode not running — scope \"system\" and reboot for full coverage."
+            loadedHere && frameworkWanted ->
+                "Framework mode is on but its hook is not live in system_server. Scope " +
+                "\"System Framework (system)\" in LSPosed and reboot."
+            loadedHere -> "Per-app mode — only the apps you tick in LSPosed → Scope are spoofed."
             else -> "Enable DuckUSB in LSPosed, then scope your apps"
         }
 
@@ -291,9 +298,17 @@ class MainActivity : AppCompatActivity() {
         val st = svcState
 
         if (st == null) {
+            // Split on the one cause the app can actually check. The old copy listed all three
+            // at once and led with "not scoped", which is the wrong first guess whenever the
+            // toggle is simply off — the state every fresh install starts in (issue #4).
             col.addView(TextView(this).apply {
-                text = "Not reachable.\nFramework mode off, “System Framework (system)” not scoped, " +
-                       "or no reboot since enabling it."
+                text = if (!prefs.getBoolean(Config.KEY_FRAMEWORK_MODE, false))
+                    "Not running — framework mode is off.\nTurn on “Framework mode” above, tick " +
+                    "“System Framework (system)” in LSPosed → Scope, then reboot."
+                else
+                    "Framework mode is on, but the hook is not live in system_server.\nTick " +
+                    "“System Framework (system)” in LSPosed → Scope and reboot — the hook only " +
+                    "installs at boot."
                 setTextColor(cOnSurfaceVar)
                 setTextSize(TypedValue.COMPLEX_UNIT_SP, 12.5f)
             })
@@ -436,7 +451,13 @@ class MainActivity : AppCompatActivity() {
         // The two settings layers are mutually exclusive. Framework mode already covers every
         // app at the server chokepoint, so per-app adds nothing on top of it — and worse, it
         // short-circuits reads inside the app so the framework hook never sees them, blanking
-        // those callers from the records list. Whichever is on greys the other out.
+        // those callers from the records list.
+        //
+        // The exclusion used to be enforced by greying the loser out, which made framework mode
+        // unreachable on a fresh install: per-app defaults ON, so the framework switch shipped
+        // disabled behind a subtitle that never said what to turn off first. People scoped
+        // System Framework correctly, saw "Not reachable", and concluded the module was broken
+        // (issue #4). Both switches now stay live; turning one on turns the other off.
         val fw = prefs.getBoolean(Config.KEY_FRAMEWORK_MODE, false)
         val perApp = prefs.getBoolean(Config.KEY_CLIENT_FALLBACK, true)
 
@@ -444,14 +465,16 @@ class MainActivity : AppCompatActivity() {
             "adb_enabled · adb_wifi_enabled · Developer Options → off", Config.KEY_SPOOF))
         col.addView(thinDivider())
         col.addView(toggleRow("🧪", "Framework mode",
-            if (perApp) "Disabled while per-app is on — they cover the same thing"
-            else "One hook in System Framework covers every app, no per-app scope. Needs the \"system\" scope + reboot.",
-            Config.KEY_FRAMEWORK_MODE, default = false, enabled = !perApp, rebuild = true))
+            "One hook in System Framework covers every app, no per-app scope. Needs the \"system\" " +
+            "scope + reboot." + if (perApp) " Turns per-app off." else "",
+            Config.KEY_FRAMEWORK_MODE, default = false, rebuild = true,
+            exclusiveWith = Config.KEY_CLIENT_FALLBACK))
         col.addView(thinDivider())
         col.addView(toggleRow("🎯", "Per-app Settings spoof",
-            if (fw) "Disabled while framework mode is on — it would also hide those apps from the records above"
-            else "Hooks Settings getters inside each scoped app (restart the app)",
-            Config.KEY_CLIENT_FALLBACK, default = true, enabled = !fw, rebuild = true))
+            "Hooks Settings getters inside each scoped app (restart the app)." +
+            if (fw) " Turns framework mode off." else "",
+            Config.KEY_CLIENT_FALLBACK, default = true, rebuild = true,
+            exclusiveWith = Config.KEY_FRAMEWORK_MODE))
         col.addView(thinDivider())
         col.addView(toggleRow("🔕", "Hide \"USB debugging\" notification",
             "Needs System Framework + System UI in scope", Config.KEY_HIDE_NOTIF))
@@ -459,9 +482,14 @@ class MainActivity : AppCompatActivity() {
         return card
     }
 
+    /**
+     * @param exclusiveWith key of a toggle this one cannot coexist with. Switching this row ON
+     *   switches that one OFF, rather than the row being disabled while the other is on — a
+     *   disabled row cannot be reached at all if it is the one that ships off by default.
+     */
     private fun toggleRow(
         icon: String, title: String, subtitle: String, key: String,
-        default: Boolean = true, enabled: Boolean = true, rebuild: Boolean = false,
+        default: Boolean = true, rebuild: Boolean = false, exclusiveWith: String? = null,
     ): View {
         val row = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -491,20 +519,23 @@ class MainActivity : AppCompatActivity() {
         })
         val sw = MaterialSwitch(this).apply {
             isChecked = prefs.getBoolean(key, default)
-            isEnabled = enabled
             setPadding(dp(10), 0, 0, 0)
             setOnCheckedChangeListener { _, checked ->
-                prefs.edit().putBoolean(key, checked).apply()
+                prefs.edit().apply {
+                    putBoolean(key, checked)
+                    // Only turning ON evicts the partner. Turning this row off leaves the other
+                    // alone, so it is still possible to run with neither layer installed.
+                    if (checked && exclusiveWith != null) putBoolean(exclusiveWith, false)
+                }.apply()
                 pushConfigToService()
-                // Re-render so the paired toggle greys/ungreys immediately. Rebuilds the two
-                // cards in place rather than recreate()-ing the activity, which would throw the
-                // user back to the top of the page mid-interaction.
+                // Re-render so the paired toggle flips immediately. Rebuilds the two cards in
+                // place rather than recreate()-ing the activity, which would throw the user
+                // back to the top of the page mid-interaction.
                 if (rebuild) refreshCards()
             }
         }
         row.addView(sw)
-        if (enabled) row.setOnClickListener { sw.isChecked = !sw.isChecked }
-        row.alpha = if (enabled) 1f else 0.45f
+        row.setOnClickListener { sw.isChecked = !sw.isChecked }
         return row
     }
 
