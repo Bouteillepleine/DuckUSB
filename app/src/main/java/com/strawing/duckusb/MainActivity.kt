@@ -216,32 +216,39 @@ class MainActivity : AppCompatActivity() {
         val frameworkLive = svcState != null
         val loadedHere = isModuleActive()
 
-        val bg = when {
-            paused -> cErrorCont
-            frameworkLive || loadedHere -> cPrimaryCont
-            else -> cErrorCont
-        }
-        val fg = when {
-            paused -> cOnErrorCont
-            frameworkLive || loadedHere -> cOnPrimaryCont
-            else -> cOnErrorCont
-        }
-        val title = when {
-            paused -> "Paused"
-            frameworkLive -> "Active — framework mode"
-            loadedHere -> "Active — per-app only"
-            else -> "Not active"
-        }
         // When framework mode is off, "framework mode not running" is not a fault to report —
         // it is the configuration. Saying so anyway sent issue #4 chasing a scope that was
         // already correct, so the per-app case now states what per-app actually requires.
+        //
+        // The one state that IS a fault: framework mode selected, its hook not in system_server.
+        // Selecting it also turned per-app off, so nothing is installed for this boot — calling
+        // that "Active" in a green card would be the same flavour of lie. It says so instead.
         val frameworkWanted = prefs.getBoolean(Config.KEY_FRAMEWORK_MODE, false)
+        val perAppWanted = prefs.getBoolean(Config.KEY_CLIENT_FALLBACK, true)
+        val pendingReboot = loadedHere && !frameworkLive && frameworkWanted
+        // Turning a layer off does not turn the other on, so "neither" is reachable in two taps.
+        // loadedHere only means the module got injected into this process — it says nothing about
+        // whether a spoof layer is selected, so on its own it must not be reported as "Active".
+        val noLayer = loadedHere && !frameworkLive && !frameworkWanted && !perAppWanted
+        val healthy = !paused && !pendingReboot && !noLayer && (frameworkLive || loadedHere)
+
+        val bg = if (healthy) cPrimaryCont else cErrorCont
+        val fg = if (healthy) cOnPrimaryCont else cOnErrorCont
+        val title = when {
+            paused -> "Paused"
+            frameworkLive -> "Active — framework mode"
+            pendingReboot -> "Reboot needed"
+            noLayer -> "Nothing is spoofing"
+            loadedHere -> "Active — per-app only"
+            else -> "Not active"
+        }
         val detail = when {
             paused -> "All spoofing stopped. Hooks stay loaded until reboot; LSPosed's switch is the real off."
             frameworkLive -> "Hook live in system_server, covering every app"
-            loadedHere && frameworkWanted ->
-                "Framework mode is on but its hook is not live in system_server. Scope " +
-                "\"System Framework (system)\" in LSPosed and reboot."
+            pendingReboot ->
+                "Framework mode is on but its hook is not live in system_server. Nothing is " +
+                "spoofing until you scope \"System Framework (system)\" in LSPosed and reboot."
+            noLayer -> "Framework mode and per-app spoof are both off. Turn one on below."
             loadedHere -> "Per-app mode — only the apps you tick in LSPosed → Scope are spoofed."
             else -> "Enable DuckUSB in LSPosed, then scope your apps"
         }
@@ -251,7 +258,7 @@ class MainActivity : AppCompatActivity() {
             orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
         }
         row.addView(TextView(this).apply {
-            text = if (paused) "⏸️" else if (frameworkLive || loadedHere) "✅" else "⛔"
+            text = if (paused) "⏸️" else if (healthy) "✅" else "⛔"
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 24f)
             setPadding(0, 0, dp(14), 0)
         })
@@ -576,6 +583,11 @@ class MainActivity : AppCompatActivity() {
         statusHolder.addView(statusCard())
         controlsHolder.removeAllViews()
         controlsHolder.addView(controlsCard())
+        // The service card's copy now depends on the framework-mode toggle, so it goes stale the
+        // moment that switch flips. It used to be toggle-independent, which is why refreshing it
+        // here was not needed before — verified stale on-device: flipping framework mode on left
+        // the card still reading "framework mode is off".
+        if (::diagHolder.isInitialized) refreshDiagnostics()
     }
 
     /** Re-read the service snapshot and redraw the diagnostics section. */
