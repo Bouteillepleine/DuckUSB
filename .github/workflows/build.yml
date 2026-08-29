@@ -2,7 +2,10 @@ name: Build APK
 
 on:
   push:
-    branches: [ master ]
+    # Work branches build too, so a migration can be verified by CI long before it is
+    # anywhere near master. Building is all they do: publishing is gated on the ref being
+    # a tag (see the `release` job), which no branch push can satisfy.
+    branches: [ master, 'libxposed-*' ]
     # A v* tag builds AND publishes a release (see the `release` job below).
     tags: [ 'v*' ]
   pull_request:
