@@ -1,0 +1,6 @@
+# The framework parses these byte-for-byte. A CRLF checkout on Windows turns the entry in
+# java_init.list into "com.strawing.duckusb.DuckUSBModule\r", which names a class that does
+# not exist — the module then installs, enables, and loads nothing, with no error anywhere.
+# Same for module.prop's minApiVersion/targetApiVersion values. Pin them to LF.
+META-INF/xposed/*      text eol=lf
+*.list                 text eol=lf

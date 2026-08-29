@@ -2,7 +2,10 @@ name: Build APK
 
 on:
   push:
-    branches: [ master ]
+    # Work branches build too, so a migration can be verified by CI long before it is
+    # anywhere near master. Building is all they do: publishing is gated on the ref being
+    # a tag (see the `release` job), which no branch push can satisfy.
+    branches: [ master, 'libxposed-*' ]
     # A v* tag builds AND publishes a release (see the `release` job below).
     tags: [ 'v*' ]
   pull_request:
@@ -111,13 +114,83 @@ jobs:
             && echo "  ok: own-package guard string present" \
             || { echo "  MISSING: own-package guard (see should_skip_hooks)"; exit 1; }
 
+          # Modern (libxposed) entry points. These four files ARE the module as far as the
+          # framework is concerned: lose any one and the APK still builds, still installs and
+          # simply never loads — the exact silent failure this project keeps having to debug.
+          # AGP will happily drop a META-INF path without warning, hence checking the packaged
+          # bytes rather than trusting the source tree.
+          echo "Checking libxposed entry points"
+          for f in module.prop java_init.list native_init.list scope.list; do
+            grep -q "META-INF/xposed/$f" <<< "$LIST" \
+              && echo "  ok: $f" \
+              || { echo "  MISSING: META-INF/xposed/$f"; exit 1; }
+          done
+          unzip -p "$APK" META-INF/xposed/module.prop > _apkcheck/module.prop
+          grep -qE '^minApiVersion=101$' _apkcheck/module.prop \
+            && echo "  ok: minApiVersion=101" \
+            || { echo "  module.prop does not declare minApiVersion=101"; cat _apkcheck/module.prop; exit 1; }
+          # java_init.list must name a class the APK actually ships, or the framework loads
+          # nothing and says nothing. Checked against the dex, not the source tree. Note the
+          # dex stores type descriptors (Lcom/foo/Bar;), never the dotted name — grepping for
+          # the dotted form finds nothing and would pass/fail for the wrong reason.
+          ENTRY=$(unzip -p "$APK" META-INF/xposed/java_init.list | head -1 | tr -d '\r')
+          DESC="L$(echo "$ENTRY" | tr '.' '/');"
+          echo "  entry class: $ENTRY  ($DESC)"
+          unzip -o -q "$APK" 'classes*.dex' -d _apkcheck
+          grep -aqF "$DESC" _apkcheck/classes*.dex \
+            && echo "  ok: entry class present in dex" \
+            || { echo "  MISSING: $ENTRY is not in any classes.dex"; exit 1; }
+          # And the legacy entry points must be gone: a module is legacy or modern, never both.
+          grep -q "assets/xposed_init" <<< "$LIST" \
+            && { echo "  STALE: assets/xposed_init is still packaged"; exit 1; } \
+            || echo "  ok: no legacy assets/xposed_init"
+
           echo "APK verification passed."
+
+      - name: Build update.json
+        # Only tags publish, so only tags need it. Generated HERE rather than in the release
+        # job because that job has no checkout — it only downloads the artifact.
+        #
+        # minApiVersion is the load-bearing field, and it is read out of the built APK rather
+        # than hardcoded so the JSON cannot drift from what shipped. A modern module is not
+        # merely refused by an older framework, it is never listed at all, so the in-app check
+        # must be able to hold those users back instead of offering a build that does nothing.
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_REF_NAME}"
+          APK=app/build/outputs/apk/release/app-release.apk
+          NAME="DuckUSB-${TAG}.apk"
+          MIN_API=$(unzip -p "$APK" META-INF/xposed/module.prop | sed -n 's/^minApiVersion=//p' | tr -d '\r')
+          [ -n "$MIN_API" ] || { echo "module.prop declares no minApiVersion"; exit 1; }
+          VERSION_CODE=$(grep -oE 'versionCode *= *[0-9]+' app/build.gradle.kts | grep -oE '[0-9]+')
+          [ -n "$VERSION_CODE" ] || { echo "cannot read versionCode"; exit 1; }
+          cat > update.json <<JSON
+          {
+            "schemaVersion": 1,
+            "versionName": "${TAG#v}",
+            "versionCode": ${VERSION_CODE},
+            "minApiVersion": ${MIN_API},
+            "builtAtUtc": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+            "commit": { "sha": "${GITHUB_SHA}" },
+            "apk": {
+              "name": "${NAME}",
+              "downloadUrl": "https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}/${NAME}",
+              "sizeBytes": $(stat -c%s "$APK"),
+              "sha256": "$(sha256sum "$APK" | cut -d' ' -f1)"
+            }
+          }
+          JSON
+          cat update.json
+          python3 -c "import json;json.load(open('update.json'))" && echo "update.json is valid JSON"
 
       - name: Upload APK
         uses: actions/upload-artifact@v7
         with:
           name: DuckUSB-release
-          path: app/build/outputs/apk/release/app-release.apk
+          path: |
+            app/build/outputs/apk/release/app-release.apk
+            update.json
           if-no-files-found: error
 
   release:
@@ -150,7 +223,7 @@ jobs:
         run: |
           set -euo pipefail
           TAG="${GITHUB_REF_NAME}"
-          gh release create "$TAG" "DuckUSB-${TAG}.apk" \
+          gh release create "$TAG" "DuckUSB-${TAG}.apk" update.json \
             --repo "$GITHUB_REPOSITORY" \
             --title "$TAG" \
             --generate-notes

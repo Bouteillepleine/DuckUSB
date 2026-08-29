@@ -44,6 +44,17 @@ object Config {
     const val KEY_HIDE_NOTIF = "hide_notif_enabled"
 
     /**
+     * Set once the 1.3.x settings have been copied into the framework's remote preferences.
+     * Kept so the import runs exactly once and never overwrites later edits.
+     */
+    const val KEY_PREFS_IMPORTED = "prefs_imported_v2"
+
+    /** Every boolean setting worth carrying across the move to remote preferences. */
+    val BOOLEAN_KEYS: List<String> = listOf(
+        KEY_PAUSED, KEY_SPOOF, KEY_FRAMEWORK_MODE, KEY_CLIENT_FALLBACK, KEY_VERBOSE_LOG, KEY_HIDE_NOTIF
+    )
+
+    /**
      * Retired toggle. The property spoof is no longer switchable: it applies automatically in
      * every scoped non-core app, because scoping an app in LSPosed already expresses the intent
      * and the UI cannot read LSPosed's scope to gate a switch honestly. The key is kept only so
@@ -52,10 +63,6 @@ object Config {
     @Deprecated("Property spoof is automatic for scoped apps; no longer user-switchable.")
     const val KEY_SPOOF_PROPS = "spoof_props_enabled"
 
-    /**
-     * Property overrides applied to scoped apps. `persist.sys.usb.config` is deliberately
-     * omitted (persisted / boot-influencing; DuckUSB has always left it alone).
-     */
     /**
      * OS plumbing that must never be lied to, by either the settings spoof or the property
      * spoof. com.android.mtp is uid 10091 on OP15 — an app uid, so the "uid < 10000" sparing
@@ -74,6 +81,14 @@ object Config {
         "com.oplus.ota",
     )
 
+    /**
+     * Property overrides served to scoped apps.
+     *
+     * These are READ-side lies only. The module hooks __system_property_get / _find / _read /
+     * _read_callback and android.os.SystemProperties.native_get*; it never calls
+     * __system_property_set, SystemProperties.set or setprop anywhere. The real property store
+     * is never modified, so nothing here can influence boot or the USB gadget.
+     */
     val PROP_OVERRIDES: Map<String, String> = mapOf(
         // sys.usb.ffs.ready is deliberately NOT spoofed. It is the USB function-filesystem
         // ready flag — machinery the USB stack acts on, not telemetry detectors read. Claiming
@@ -82,6 +97,17 @@ object Config {
         "sys.usb.config" to "mtp",
         "sys.usb.state" to "mtp",
         "init.svc.adbd" to "stopped",
-        // persist.sys.usb.config stays untouched: persisted and boot-influencing.
+        // persist.sys.usb.config stays UNSPOOFED, and the reason is now measured rather than
+        // assumed. Spoofing it is safe (we never write; init/system_server/MTP are all out of
+        // reach) but it is counter-productive: Duck Detector reads each property three ways —
+        // reflection, the `getprop` binary, and libc in-process. The first and third are hooks
+        // we own; `getprop` is a separate exec'd process, so no in-process hook can reach it.
+        // Spoofing this key therefore turned a benign "USB debugging is configured" reading —
+        // true of every developer's phone — into "Property source mismatch / Diverged", which
+        // only active hooking can produce. Truthful is quieter than inconsistent.
+        //
+        // The same divergence exists for the three keys above; Duck Detector simply does not
+        // cross-check those. Any detector that compares an in-process read against `getprop`
+        // output can spot this whole layer, which is a known limit of read-side property spoofing.
     )
 }

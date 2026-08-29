@@ -14,9 +14,16 @@ Settings.Global.getInt(cr, "development_settings_enabled")  // Developer Options
 
 ## Install
 
+> **Requires a framework implementing libxposed API 101** — LSPosed 2.x or a fork based on it.
+> This is a *modern* Xposed module: it carries no `xposedmodule` meta-data and no
+> `assets/xposed_init`, so an older LSPosed does not merely refuse it — **it never lists it as a
+> module at all**. Nothing crashes and nothing bootloops; the app installs, opens, and reports
+> "Not active" forever. Verified loading on LSPosed `7732` (reports API 101) and `7846` (API 102).
+> If you are on an older framework, stay on **v1.3.3**, the last legacy-API build.
+
 1. Install the APK and enable **DuckUSB** in LSPosed.
 2. LSPosed → DuckUSB → **Scope**, tick the entry whose package is **`system`**. That is the one that injects into `system_server`, and framework mode needs it.
-   > ⚠️ **Not** the entry whose package is `android`. That one does *not* inject into `system_server`; picking it gives you a module that looks enabled and silently does nothing. The module ships an `xposedscope` recommendation so LSPosed highlights the right entries.
+   > ⚠️ **Not** the entry whose package is `android`. That one does *not* inject into `system_server`; picking it gives you a module that looks enabled and silently does nothing. The module ships a `META-INF/xposed/scope.list` recommendation so LSPosed highlights the right entries.
 3. Also tick **System UI** if you want the notification hidden, and any individual apps you want the property spoof for.
 4. **Reboot.** Force-stop an individual app after scoping it.
 
@@ -24,9 +31,21 @@ Settings.Global.getInt(cr, "development_settings_enabled")  // Developer Options
 
 **Framework mode (recommended)**: one hook in `system_server` covers every app, no per-app scope. Hooks `ContentProvider.attachInfo`, waits for the settings provider (matched by **authority**, so ROMs that subclass `SettingsProvider` still work), then hooks only that provider's `call()`. Results are rewritten per caller by `Binder.getCallingUid()`, with `_generation_index = -1` so the client settings cache can't serve a stale real value.
 
-**Per-app mode**: the client-side hook on the static `Settings.Global` / `Settings.Secure` getters inside each scoped app. For when you don't want `system_server` touched at all.
+It is also the **stealthier** of the two, and not by a small margin. Because nothing is installed inside the target process, that process has no hook residue to find in its own memory. Measured on an OP11 against Duck Detector, scoping it per-app vs. covering it from `system_server`:
 
-The two are mutually exclusive and the UI enforces it: framework mode already covers everything per-app would, and per-app short-circuits reads inside the app, hiding those callers from the diagnostics.
+| Duck Detector's own process | per-app (scoped) | framework mode (unscoped) |
+|---|---|---|
+| `libc.so` dirty exec pages | 4 kB | — |
+| `libart.so` dirty exec pages | 28 kB | — |
+| `linker64` dirty exec pages | 4 kB | — |
+| its **Memory** verdict | `[DANGER]` 10 high-risk signals | **`[CLEAR]`** |
+| `adb_enabled` it reads | 0 | **0** |
+
+Same lie, no residue. Inline hooks write to code pages, the copy-on-write shows up in `/proc/self/smaps`, and a detector reading its own smaps sees it. The control that proves it: DuckUSB's own process has the module mapped but installs no hooks in itself, and shows zero dirty pages.
+
+**Per-app mode**: the client-side hook on the static `Settings.Global` / `Settings.Secure` getters inside each scoped app. It is the only mode that also spoofs the `sys.usb.*` properties — but it pays for that with hook traces in the target's memory, as above. Use it when you need the property spoof, or when you don't want `system_server` touched at all.
+
+The two are mutually exclusive, and the UI presents them as one **Method** choice rather than two switches — picking one *is* turning the other off. They were two switches until issue #4, where per-app shipping ON left the framework switch greyed out with nothing explaining what to turn off first.
 
 Callers at **uid < 10000** (root / system / shell) always see the truth, so `adb` and the Settings toggle keep working.
 

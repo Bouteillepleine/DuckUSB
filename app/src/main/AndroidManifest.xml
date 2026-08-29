@@ -1,31 +1,26 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
+    <!-- Only for the manual "Check for updates" row. Nothing is fetched on launch, and the
+         hook half never touches the network. -->
+    <uses-permission android:name="android.permission.INTERNET" />
+
+    <!--
+      A modern (libxposed) module carries NO xposed* meta-data. The framework identifies it
+      from META-INF/xposed/ instead: module.prop (min/target API), java_init.list (the entry
+      class), native_init.list (libduckusb.so) and scope.list (the recommended scope, which
+      replaces the old @array/module_scope resource). Leaving the legacy meta-data here would
+      not add legacy compatibility — the entry point files decide that — it would only make
+      the module advertise an API level it no longer implements.
+    -->
     <application
+        android:name=".DuckApp"
         android:allowBackup="true"
         android:extractNativeLibs="false"
         android:icon="@mipmap/ic_launcher"
         android:label="@string/app_name"
         android:supportsRtl="true"
         android:theme="@style/Theme.DuckUSB">
-
-        <!-- Xposed / LSPosed module descriptors -->
-        <meta-data
-            android:name="xposedmodule"
-            android:value="true" />
-        <meta-data
-            android:name="xposeddescription"
-            android:value="@string/xposed_description" />
-        <meta-data
-            android:name="xposedminversion"
-            android:value="93" />
-        <!-- Recommends "system" (the entry that injects into system_server), "android" and
-             System UI. LSPosed only marks these as recommended — it does not tick them — so
-             framework mode remains a deliberate opt-in requiring a manual scope + reboot.
-             See res/values/arrays.xml. -->
-        <meta-data
-            android:name="xposedscope"
-            android:resource="@array/module_scope" />
 
         <activity
             android:name=".MainActivity"
