@@ -333,7 +333,12 @@ class MainActivity : AppCompatActivity() {
                 "in system_server. Nothing is spoofing until you reboot."
             noLayer -> "Framework mode and per-app spoof are both off. Turn one on below."
             loadedHere -> "Per-app mode — only the apps you tick in LSPosed → Scope are spoofed."
-            else -> "Enable DuckUSB in LSPosed, then scope your apps"
+            // The app cannot tell "not enabled yet" from "framework too old": both look like
+            // no service binder. A modern module carries no xposedmodule meta-data, so an
+            // LSPosed without libxposed 101 does not list it at all — say so here, or the user
+            // hunts for a module entry that will never appear.
+            else -> "Enable DuckUSB in LSPosed, then scope your apps. Not listed there? " +
+                    "That LSPosed is too old — this build needs libxposed API 101."
         }
 
         val card = filledCard(bg, dp(22))

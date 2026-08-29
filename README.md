@@ -14,6 +14,13 @@ Settings.Global.getInt(cr, "development_settings_enabled")  // Developer Options
 
 ## Install
 
+> **Requires a framework implementing libxposed API 101** — LSPosed 2.x or a fork based on it.
+> This is a *modern* Xposed module: it carries no `xposedmodule` meta-data and no
+> `assets/xposed_init`, so an older LSPosed does not merely refuse it — **it never lists it as a
+> module at all**. Nothing crashes and nothing bootloops; the app installs, opens, and reports
+> "Not active" forever. Verified loading on LSPosed `7732` (reports API 101) and `7846` (API 102).
+> If you are on an older framework, stay on **v1.3.3**, the last legacy-API build.
+
 1. Install the APK and enable **DuckUSB** in LSPosed.
 2. LSPosed → DuckUSB → **Scope**, tick the entry whose package is **`system`**. That is the one that injects into `system_server`, and framework mode needs it.
    > ⚠️ **Not** the entry whose package is `android`. That one does *not* inject into `system_server`; picking it gives you a module that looks enabled and silently does nothing. The module ships a `META-INF/xposed/scope.list` recommendation so LSPosed highlights the right entries.
