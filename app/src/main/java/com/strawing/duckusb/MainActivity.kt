@@ -366,14 +366,32 @@ class MainActivity : AppCompatActivity() {
                 setPadding(0, dp(2), 0, 0)
             })
         })
-        row.addView(MaterialSwitch(this).apply {
-            isChecked = paused
+        // Captioned, because a bare switch on the hero card reads as "turn the module off" —
+        // which it is not. It stops every hook body; the hooks themselves stay loaded until
+        // reboot, and LSPosed's own switch is the real off. An unlabelled control that looks
+        // like the master power button is the one thing on this screen a user could get
+        // confidently wrong.
+        row.addView(LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER_HORIZONTAL
             setPadding(dp(10), 0, 0, 0)
-            setOnCheckedChangeListener { _, checked ->
-                prefs.edit().putBoolean(Config.KEY_PAUSED, checked).apply()
-                pushConfigToService()
-                refreshCards()
-            }
+            addView(MaterialSwitch(this@MainActivity).apply {
+                isChecked = paused
+                contentDescription = "Pause all spoofing"
+                setOnCheckedChangeListener { _, checked ->
+                    prefs.edit().putBoolean(Config.KEY_PAUSED, checked).apply()
+                    pushConfigToService()
+                    refreshCards()
+                }
+            })
+            addView(TextView(this@MainActivity).apply {
+                text = "Pause"
+                setTextColor(fg)
+                alpha = 0.75f
+                gravity = Gravity.CENTER
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f)
+                setPadding(0, dp(2), 0, 0)
+            })
         })
         card.addView(row)
         return card
