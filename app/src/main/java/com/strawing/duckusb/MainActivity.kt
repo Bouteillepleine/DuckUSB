@@ -19,6 +19,8 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.appcompat.app.AppCompatDelegate
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
+import com.google.android.material.button.MaterialButton
+import com.google.android.material.button.MaterialButtonToggleGroup
 import com.google.android.material.card.MaterialCardView
 import com.google.android.material.color.DynamicColors
 import com.google.android.material.color.MaterialColors
@@ -104,8 +106,7 @@ class MainActivity : AppCompatActivity() {
         root.addView(sectionLabel("Setup"))
         root.addView(outlinedCard().apply {
             addView(toggleRow("🐞", "Verbose logging",
-                "One LSPosed log line per injection — package, process, uid, guards. " +
-                "For troubleshooting a hook that won't install. Takes effect on reboot.",
+                "One log line per injection. For troubleshooting a hook that won't install.",
                 Config.KEY_VERBOSE_LOG, default = false))
         })
         root.addView(scopeHintCard())
@@ -464,9 +465,12 @@ class MainActivity : AppCompatActivity() {
 
         val cr = contentResolver
         fun g(k: String) = try { Settings.Global.getInt(cr, k, 0) } catch (t: Throwable) { -1 }
-        col.addView(readingRow("adb_enabled", g("adb_enabled").toString(), g("adb_enabled") == 0))
-        col.addView(readingRow("development_settings_enabled", g("development_settings_enabled").toString(), g("development_settings_enabled") == 0))
-        col.addView(readingRow("adb_wifi_enabled", g("adb_wifi_enabled").toString(), g("adb_wifi_enabled") == 0))
+        // Neutral chips, never ticks: DuckUSB never spoofs itself, so this card is the REAL
+        // device state. A tick on "0" would read as pass/fail and imply a "1" here is a fault,
+        // when the only honest reading of this card is "what your device actually says".
+        col.addView(readingRow("adb_enabled", g("adb_enabled").toString(), false))
+        col.addView(readingRow("development_settings_enabled", g("development_settings_enabled").toString(), false))
+        col.addView(readingRow("adb_wifi_enabled", g("adb_wifi_enabled").toString(), false))
 
         col.addView(thinDivider())
 
@@ -474,12 +478,12 @@ class MainActivity : AppCompatActivity() {
             Class.forName("android.os.SystemProperties").getMethod("get", String::class.java)
         } catch (t: Throwable) { null }
         fun p(k: String) = try { (get?.invoke(null, k) as? String).orEmpty().ifEmpty { "—" } } catch (t: Throwable) { "?" }
-        col.addView(readingRow("sys.usb.state", p("sys.usb.state"), p("sys.usb.state") == "mtp"))
-        col.addView(readingRow("sys.usb.config", p("sys.usb.config"), p("sys.usb.config") == "mtp"))
-        col.addView(readingRow("init.svc.adbd", p("init.svc.adbd"), p("init.svc.adbd") == "stopped"))
+        col.addView(readingRow("sys.usb.state", p("sys.usb.state"), false))
+        col.addView(readingRow("sys.usb.config", p("sys.usb.config"), false))
+        col.addView(readingRow("init.svc.adbd", p("init.svc.adbd"), false))
 
         col.addView(TextView(this).apply {
-            text = "Scope DuckUSB onto an app (force-stop + reopen) to see these read spoofed there."
+            text = "Real device state — DuckUSB never spoofs itself. Check a scoped app to see these lied about."
             setTextColor(cOnSurfaceVar)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
             setPadding(0, dp(10), 0, 0)
@@ -541,33 +545,10 @@ class MainActivity : AppCompatActivity() {
         val card = outlinedCard()
         val col = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
 
-        // The two settings layers are mutually exclusive. Framework mode already covers every
-        // app at the server chokepoint, so per-app adds nothing on top of it — and worse, it
-        // short-circuits reads inside the app so the framework hook never sees them, blanking
-        // those callers from the records list.
-        //
-        // The exclusion used to be enforced by greying the loser out, which made framework mode
-        // unreachable on a fresh install: per-app defaults ON, so the framework switch shipped
-        // disabled behind a subtitle that never said what to turn off first. People scoped
-        // System Framework correctly, saw "Not reachable", and concluded the module was broken
-        // (issue #4). Both switches now stay live; turning one on turns the other off.
-        val fw = prefs.getBoolean(Config.KEY_FRAMEWORK_MODE, false)
-        val perApp = prefs.getBoolean(Config.KEY_CLIENT_FALLBACK, true)
-
         col.addView(toggleRow("🔌", "Spoof USB debugging",
             "adb_enabled · adb_wifi_enabled · Developer Options → off", Config.KEY_SPOOF))
         col.addView(thinDivider())
-        col.addView(toggleRow("🧪", "Framework mode",
-            "One hook in System Framework covers every app, no per-app scope. Needs the \"system\" " +
-            "scope + reboot." + if (perApp) " Turns per-app off." else "",
-            Config.KEY_FRAMEWORK_MODE, default = false, rebuild = true,
-            exclusiveWith = Config.KEY_CLIENT_FALLBACK))
-        col.addView(thinDivider())
-        col.addView(toggleRow("🎯", "Per-app Settings spoof",
-            "Hooks Settings getters inside each scoped app (restart the app)." +
-            if (fw) " Turns framework mode off." else "",
-            Config.KEY_CLIENT_FALLBACK, default = true, rebuild = true,
-            exclusiveWith = Config.KEY_FRAMEWORK_MODE))
+        col.addView(methodRow())
         col.addView(thinDivider())
         col.addView(toggleRow("🔕", "Hide \"USB debugging\" notification",
             "Needs System Framework + System UI in scope", Config.KEY_HIDE_NOTIF))
@@ -576,13 +557,78 @@ class MainActivity : AppCompatActivity() {
     }
 
     /**
-     * @param exclusiveWith key of a toggle this one cannot coexist with. Switching this row ON
-     *   switches that one OFF, rather than the row being disabled while the other is on — a
-     *   disabled row cannot be reached at all if it is the one that ships off by default.
+     * The two spoof layers are ONE choice, not two switches.
+     *
+     * They were always mutually exclusive, and expressing that as a pair of switches is what
+     * made framework mode unreachable on a fresh install (issue #4): per-app ships on, so the
+     * framework switch arrived greyed out behind a subtitle that never said what to turn off
+     * first. A single selector cannot reach that state — picking one *is* turning the other off.
      */
+    private fun methodRow(): View {
+        val col = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(0, dp(12), 0, dp(12))
+        }
+        col.addView(TextView(this).apply {
+            text = "Method"
+            setTextColor(cOnSurface)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 15.5f)
+            typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+        })
+
+        val idFramework = View.generateViewId()
+        val idPerApp = View.generateViewId()
+        val group = MaterialButtonToggleGroup(this).apply {
+            isSingleSelection = true
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
+            ).apply { topMargin = dp(10) }
+        }
+        fun pill(id: Int, label: String) = MaterialButton(
+            this, null, com.google.android.material.R.attr.materialButtonOutlinedStyle
+        ).apply {
+            this.id = id
+            text = label
+            isAllCaps = false
+            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+        }
+        group.addView(pill(idFramework, "Framework"))
+        group.addView(pill(idPerApp, "Per-app"))
+        // Check before the listener is attached, so restoring state cannot fire a write.
+        if (prefs.getBoolean(Config.KEY_FRAMEWORK_MODE, false)) group.check(idFramework)
+        else if (prefs.getBoolean(Config.KEY_CLIENT_FALLBACK, true)) group.check(idPerApp)
+
+        col.addView(group)
+        col.addView(TextView(this).apply {
+            text = when {
+                prefs.getBoolean(Config.KEY_FRAMEWORK_MODE, false) ->
+                    "Covers every app from system_server, and installs nothing inside the " +
+                    "target — no hook traces in its memory. Needs \"system\" scope + reboot."
+                prefs.getBoolean(Config.KEY_CLIENT_FALLBACK, true) ->
+                    "Hooks inside each scoped app — also spoofs sys.usb.*, but leaves hook " +
+                    "traces in that app's memory. Restart the app to apply."
+                else -> "No method selected — nothing is being spoofed."
+            }
+            setTextColor(cOnSurfaceVar)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 12.5f)
+            setPadding(0, dp(8), 0, 0)
+        })
+
+        group.addOnButtonCheckedListener { _, checkedId, isChecked ->
+            if (!isChecked) return@addOnButtonCheckedListener
+            prefs.edit()
+                .putBoolean(Config.KEY_FRAMEWORK_MODE, checkedId == idFramework)
+                .putBoolean(Config.KEY_CLIENT_FALLBACK, checkedId == idPerApp)
+                .apply()
+            pushConfigToService()
+            refreshCards()
+        }
+        return col
+    }
+
     private fun toggleRow(
         icon: String, title: String, subtitle: String, key: String,
-        default: Boolean = true, rebuild: Boolean = false, exclusiveWith: String? = null,
+        default: Boolean = true,
     ): View {
         val row = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -616,15 +662,12 @@ class MainActivity : AppCompatActivity() {
             setOnCheckedChangeListener { _, checked ->
                 prefs.edit().apply {
                     putBoolean(key, checked)
-                    // Only turning ON evicts the partner. Turning this row off leaves the other
-                    // alone, so it is still possible to run with neither layer installed.
-                    if (checked && exclusiveWith != null) putBoolean(exclusiveWith, false)
                 }.apply()
                 pushConfigToService()
-                // Re-render so the paired toggle flips immediately. Rebuilds the two cards in
-                // place rather than recreate()-ing the activity, which would throw the user
-                // back to the top of the page mid-interaction.
-                if (rebuild) refreshCards()
+                // The status card reports what is running, so it has to re-read after any
+                // toggle. Rebuilt in place rather than recreate()-ing the activity, which
+                // would throw the user back to the top of the page mid-interaction.
+                refreshCards()
             }
         }
         row.addView(sw)
@@ -647,20 +690,24 @@ class MainActivity : AppCompatActivity() {
                 // an empty scope is the quietest way for this module to do nothing at all.
                 val scope = moduleScope
                 val targets = scope?.filter { it != "system" && it != "android" }
-                val state = when {
-                    scope == null -> ""
+                val framework = prefs.getBoolean(Config.KEY_FRAMEWORK_MODE, false)
+                text = when {
+                    scope == null ->
+                        "Scope in LSPosed: “System Framework (system)” for framework mode, your " +
+                        "target apps for per-app mode, System UI to hide the notification."
+                    framework && systemScoped() != true ->
+                        "⚠️ Framework mode needs “System Framework (system)” ticked in LSPosed. " +
+                        "It is not, so nothing is being spoofed."
+                    framework ->
+                        "Framework mode covers every app — no per-app ticks needed. " +
+                        "Add System UI only if you want the notification hidden."
                     targets.isNullOrEmpty() ->
-                        "\n\n⚠️ No detector apps are scoped yet, so nothing is being spoofed. " +
-                        "Tick the apps you want lied to."
+                        "⚠️ Per-app mode, but no target apps are ticked in LSPosed, so nothing " +
+                        "is being spoofed."
                     else ->
-                        "\n\nScoped: ${targets.size} app(s)" +
-                        (if (systemScoped() == true) " + System Framework" else "") + "."
+                        "Per-app mode · ${targets.size} app(s) ticked. Force-stop a target after " +
+                        "changing its scope."
                 }
-                text = "In LSPosed → DuckUSB → Scope, tick your detector apps (banking, Intune, games) " +
-                    "for the spoof, and System Framework + System UI if you want the notification hidden. " +
-                    "Force-stop a target after changing scope. (Framework mode is experimental — it can " +
-                    "bootloop system_server on some ROMs, so leave it off unless you know your ROM is safe.)" +
-                    state
                 setTextColor(cOnSurfaceVar)
                 setTextSize(TypedValue.COMPLEX_UNIT_SP, 12.5f)
             })
