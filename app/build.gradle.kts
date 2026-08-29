@@ -22,7 +22,7 @@ val hasSigning: Boolean =
     signStoreFile != null && signStorePassword != null && signKeyAlias != null && signKeyPassword != null
 
 android {
-    compileSdk = 35
+    compileSdk = 36
     namespace = "com.strawing.duckusb"
 
     // IDuckService.aidl — the system_server <-> UI channel.
@@ -35,8 +35,8 @@ android {
         applicationId = "com.strawing.duckusb"
         minSdk = 26
         targetSdk = 35
-        versionCode = 9
-        versionName = "1.3.3"
+        versionCode = 10
+        versionName = "1.4.0"
         vectorDrawables { useSupportLibrary = true }
         ndk {
             abiFilters += listOf("armeabi-v7a", "arm64-v8a", "x86", "x86_64")
@@ -77,6 +77,13 @@ android {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
+
+    // The framework reads the module's entry points out of META-INF/xposed/. AGP would
+    // otherwise drop or pick one of the duplicate META-INF paths; merging keeps all four
+    // (module.prop, java_init.list, native_init.list, scope.list) verbatim in the APK.
+    packaging {
+        resources { merges += "META-INF/xposed/*" }
+    }
 }
 
 kotlin {
@@ -89,5 +96,14 @@ dependencies {
     implementation("androidx.core:core-ktx:1.13.1")
     implementation("androidx.appcompat:appcompat:1.7.0")
     implementation("com.google.android.material:material:1.12.0")
-    compileOnly("de.robv.android.xposed:api:82")
+    // Modern Xposed (libxposed) API 101. The legacy de.robv.android.xposed:api:82 is gone:
+    // a module is either legacy or modern, never both, because the framework picks the entry
+    // point from what the APK declares (assets/xposed_init vs META-INF/xposed/java_init.list).
+    // 101 is deliberate rather than 102 — 102 forbids calling legacy APIs at all, while 101
+    // still permits it, which keeps an escape hatch if something here turns out to need one.
+    compileOnly("io.github.libxposed:api:101.0.1")
+    // App-side counterpart: binds the framework service so the UI can read its own LSPosed
+    // scope and share preferences with the hook. This is what makes the scope reporting in
+    // MainActivity honest — under the legacy API the UI could not see its own scope at all.
+    implementation("io.github.libxposed:service:101.0.0")
 }

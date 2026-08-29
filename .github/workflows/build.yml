@@ -111,6 +111,37 @@ jobs:
             && echo "  ok: own-package guard string present" \
             || { echo "  MISSING: own-package guard (see should_skip_hooks)"; exit 1; }
 
+          # Modern (libxposed) entry points. These four files ARE the module as far as the
+          # framework is concerned: lose any one and the APK still builds, still installs and
+          # simply never loads — the exact silent failure this project keeps having to debug.
+          # AGP will happily drop a META-INF path without warning, hence checking the packaged
+          # bytes rather than trusting the source tree.
+          echo "Checking libxposed entry points"
+          for f in module.prop java_init.list native_init.list scope.list; do
+            grep -q "META-INF/xposed/$f" <<< "$LIST" \
+              && echo "  ok: $f" \
+              || { echo "  MISSING: META-INF/xposed/$f"; exit 1; }
+          done
+          unzip -p "$APK" META-INF/xposed/module.prop > _apkcheck/module.prop
+          grep -qE '^minApiVersion=101$' _apkcheck/module.prop \
+            && echo "  ok: minApiVersion=101" \
+            || { echo "  module.prop does not declare minApiVersion=101"; cat _apkcheck/module.prop; exit 1; }
+          # java_init.list must name a class the APK actually ships, or the framework loads
+          # nothing and says nothing. Checked against the dex, not the source tree. Note the
+          # dex stores type descriptors (Lcom/foo/Bar;), never the dotted name — grepping for
+          # the dotted form finds nothing and would pass/fail for the wrong reason.
+          ENTRY=$(unzip -p "$APK" META-INF/xposed/java_init.list | head -1 | tr -d '\r')
+          DESC="L$(echo "$ENTRY" | tr '.' '/');"
+          echo "  entry class: $ENTRY  ($DESC)"
+          unzip -o -q "$APK" 'classes*.dex' -d _apkcheck
+          grep -aqF "$DESC" _apkcheck/classes*.dex \
+            && echo "  ok: entry class present in dex" \
+            || { echo "  MISSING: $ENTRY is not in any classes.dex"; exit 1; }
+          # And the legacy entry points must be gone: a module is legacy or modern, never both.
+          grep -q "assets/xposed_init" <<< "$LIST" \
+            && { echo "  STALE: assets/xposed_init is still packaged"; exit 1; } \
+            || echo "  ok: no legacy assets/xposed_init"
+
           echo "APK verification passed."
 
       - name: Upload APK

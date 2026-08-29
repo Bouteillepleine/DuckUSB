@@ -44,6 +44,17 @@ object Config {
     const val KEY_HIDE_NOTIF = "hide_notif_enabled"
 
     /**
+     * Set once the 1.3.x settings have been copied into the framework's remote preferences.
+     * Kept so the import runs exactly once and never overwrites later edits.
+     */
+    const val KEY_PREFS_IMPORTED = "prefs_imported_v2"
+
+    /** Every boolean setting worth carrying across the move to remote preferences. */
+    val BOOLEAN_KEYS: List<String> = listOf(
+        KEY_PAUSED, KEY_SPOOF, KEY_FRAMEWORK_MODE, KEY_CLIENT_FALLBACK, KEY_VERBOSE_LOG, KEY_HIDE_NOTIF
+    )
+
+    /**
      * Retired toggle. The property spoof is no longer switchable: it applies automatically in
      * every scoped non-core app, because scoping an app in LSPosed already expresses the intent
      * and the UI cannot read LSPosed's scope to gate a switch honestly. The key is kept only so

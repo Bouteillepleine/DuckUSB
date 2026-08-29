@@ -25,6 +25,7 @@ import com.google.android.material.color.MaterialColors
 import com.google.android.material.materialswitch.MaterialSwitch
 import com.google.android.material.R as MR
 import com.strawing.duckusb.service.DuckServiceClient
+import io.github.libxposed.service.XposedService
 
 /**
  * Config UI. Writes the three live toggles to a world-readable SharedPreferences file that
@@ -71,12 +72,7 @@ class MainActivity : AppCompatActivity() {
         DynamicColors.applyToActivityIfAvailable(this)
         super.onCreate(savedInstanceState)
 
-        @Suppress("DEPRECATION")
-        prefs = try {
-            getSharedPreferences(Config.PREFS_NAME, Context.MODE_WORLD_READABLE)
-        } catch (t: Throwable) {
-            getSharedPreferences(Config.PREFS_NAME, Context.MODE_PRIVATE)
-        }
+        prefs = resolvePrefs()
 
         applySavedTheme()
 
@@ -144,6 +140,88 @@ class MainActivity : AppCompatActivity() {
         super.onResume()
         if (::diagHolder.isInitialized) refreshDiagnostics()
     }
+
+    // ------------------------------------------------------- framework service (libxposed)
+
+    /**
+     * The framework binder arrives asynchronously and may land after this activity is built,
+     * which would leave the UI reading the local fallback prefs and reporting "Not active"
+     * forever. Rebuild once when it shows up (or goes away).
+     */
+    private val serviceListener: (XposedService?) -> Unit = { svc ->
+        runOnUiThread {
+            if ((svc != null) != usingRemotePrefs && !isFinishing) recreate()
+        }
+    }
+
+    /** True when [prefs] is the framework's remote store rather than the local fallback. */
+    private var usingRemotePrefs = false
+
+    override fun onStart() {
+        super.onStart()
+        DuckApp.addListener(serviceListener)
+    }
+
+    override fun onStop() {
+        DuckApp.removeListener(serviceListener)
+        super.onStop()
+    }
+
+    /**
+     * Module settings live in the framework's remote preferences, which is how the hook reads
+     * them from inside system_server and every scoped app. Falling back to a local file keeps
+     * the screen usable when the framework is absent — nothing is hooked in that state anyway,
+     * so the values would have no effect either way.
+     */
+    private fun resolvePrefs(): SharedPreferences {
+        DuckApp.service?.let { svc ->
+            runCatching { svc.getRemotePreferences(Config.PREFS_NAME) }.getOrNull()?.let { remote ->
+                usingRemotePrefs = true
+                importLegacyPrefs(remote)
+                return remote
+            }
+        }
+        usingRemotePrefs = false
+        return getSharedPreferences(Config.PREFS_NAME, Context.MODE_PRIVATE)
+    }
+
+    /**
+     * Carry 1.3.x settings across once. Those lived in a MODE_WORLD_READABLE SharedPreferences
+     * file that the old framework redirected out of the app's data dir; a modern module does
+     * not get that redirect, so the read may legitimately find nothing and the user simply
+     * starts from defaults. Best effort by design — never let a failed import block the UI.
+     */
+    private fun importLegacyPrefs(remote: SharedPreferences) {
+        if (remote.getBoolean(Config.KEY_PREFS_IMPORTED, false)) return
+        @Suppress("DEPRECATION")
+        val legacy = runCatching {
+            getSharedPreferences(Config.PREFS_NAME, Context.MODE_WORLD_READABLE)
+        }.getOrElse {
+            runCatching { getSharedPreferences(Config.PREFS_NAME, Context.MODE_PRIVATE) }.getOrNull()
+        }
+        val edit = remote.edit() ?: return
+        legacy?.let {
+            for (key in Config.BOOLEAN_KEYS) {
+                if (it.contains(key)) edit.putBoolean(key, it.getBoolean(key, false))
+            }
+        }
+        edit.putBoolean(Config.KEY_PREFS_IMPORTED, true).apply()
+    }
+
+    /**
+     * DuckUSB's own LSPosed scope, straight from the framework.
+     *
+     * The legacy API could not see this at all — a comment in Config.kt used to say as much —
+     * which is why the UI had to guess, and why issue #4 could be told its scope was wrong
+     * when it was fine.
+     */
+    private val moduleScope: List<String>? by lazy {
+        runCatching { DuckApp.service?.scope }.getOrNull()
+    }
+
+    /** Null when the scope is unreadable (no framework), else whether system_server is in it. */
+    private fun systemScoped(): Boolean? =
+        moduleScope?.any { it == "system" || it == "android" }
 
     // ---------------------------------------------------------------- header
 
@@ -245,9 +323,13 @@ class MainActivity : AppCompatActivity() {
         val detail = when {
             paused -> "All spoofing stopped. Hooks stay loaded until reboot; LSPosed's switch is the real off."
             frameworkLive -> "Hook live in system_server, covering every app"
+            // The scope is now readable, so name the actual fault instead of listing candidates.
+            pendingReboot && systemScoped() == false ->
+                "Framework mode is on but \"System Framework (system)\" is NOT in DuckUSB's " +
+                "scope, so the hook can never install. Tick it in LSPosed → Scope, then reboot."
             pendingReboot ->
-                "Framework mode is on but its hook is not live in system_server. Nothing is " +
-                "spoofing until you scope \"System Framework (system)\" in LSPosed and reboot."
+                "Framework mode is on and System Framework is scoped, but the hook is not live " +
+                "in system_server. Nothing is spoofing until you reboot."
             noLayer -> "Framework mode and per-app spoof are both off. Turn one on below."
             loadedHere -> "Per-app mode — only the apps you tick in LSPosed → Scope are spoofed."
             else -> "Enable DuckUSB in LSPosed, then scope your apps"
@@ -309,13 +391,17 @@ class MainActivity : AppCompatActivity() {
             // at once and led with "not scoped", which is the wrong first guess whenever the
             // toggle is simply off — the state every fresh install starts in (issue #4).
             col.addView(TextView(this).apply {
-                text = if (!prefs.getBoolean(Config.KEY_FRAMEWORK_MODE, false))
-                    "Not running — framework mode is off.\nTurn on “Framework mode” above, tick " +
-                    "“System Framework (system)” in LSPosed → Scope, then reboot."
-                else
-                    "Framework mode is on, but the hook is not live in system_server.\nTick " +
-                    "“System Framework (system)” in LSPosed → Scope and reboot — the hook only " +
-                    "installs at boot."
+                text = when {
+                    !prefs.getBoolean(Config.KEY_FRAMEWORK_MODE, false) ->
+                        "Not running — framework mode is off.\nTurn on “Framework mode” above, " +
+                        "tick “System Framework (system)” in LSPosed → Scope, then reboot."
+                    systemScoped() == false ->
+                        "Not running — “System Framework (system)” is not in DuckUSB's scope.\n" +
+                        "Tick it in LSPosed → Scope and reboot."
+                    else ->
+                        "Framework mode is on and System Framework is scoped, but the hook is " +
+                        "not live in system_server.\nReboot — the hook only installs at boot."
+                }
                 setTextColor(cOnSurfaceVar)
                 setTextSize(TypedValue.COMPLEX_UNIT_SP, 12.5f)
             })
@@ -556,10 +642,25 @@ class MainActivity : AppCompatActivity() {
                 text = "💡"; setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f); setPadding(0, 0, dp(10), 0)
             })
             addView(TextView(this@MainActivity).apply {
+                // The scope is readable now, so report it instead of only advising about it.
+                // "how many apps did I actually tick" was unanswerable in every 1.x build, and
+                // an empty scope is the quietest way for this module to do nothing at all.
+                val scope = moduleScope
+                val targets = scope?.filter { it != "system" && it != "android" }
+                val state = when {
+                    scope == null -> ""
+                    targets.isNullOrEmpty() ->
+                        "\n\n⚠️ No detector apps are scoped yet, so nothing is being spoofed. " +
+                        "Tick the apps you want lied to."
+                    else ->
+                        "\n\nScoped: ${targets.size} app(s)" +
+                        (if (systemScoped() == true) " + System Framework" else "") + "."
+                }
                 text = "In LSPosed → DuckUSB → Scope, tick your detector apps (banking, Intune, games) " +
                     "for the spoof, and System Framework + System UI if you want the notification hidden. " +
                     "Force-stop a target after changing scope. (Framework mode is experimental — it can " +
-                    "bootloop system_server on some ROMs, so leave it off unless you know your ROM is safe.)"
+                    "bootloop system_server on some ROMs, so leave it off unless you know your ROM is safe.)" +
+                    state
                 setTextColor(cOnSurfaceVar)
                 setTextSize(TypedValue.COMPLEX_UNIT_SP, 12.5f)
             })
@@ -574,8 +675,12 @@ class MainActivity : AppCompatActivity() {
         setPadding(0, dp(18), 0, 0)
     }
 
-    /** LSPosed replaces the body of this method at runtime when the module is active. */
-    private fun isModuleActive(): Boolean = false
+    /**
+     * Whether the framework has this module loaded. Holding its service binder proves it —
+     * the legacy build inferred this from a self-hook that only proved the module had been
+     * injected into its own process, which happens whether or not anything is scoped.
+     */
+    private fun isModuleActive(): Boolean = DuckApp.service != null
 
     /** Rebuild status + controls in place; leaves scroll position untouched. */
     private fun refreshCards() {
