@@ -1,6 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
+    <!-- Only for the manual "Check for updates" row. Nothing is fetched on launch, and the
+         hook half never touches the network. -->
+    <uses-permission android:name="android.permission.INTERNET" />
+
     <!--
       A modern (libxposed) module carries NO xposed* meta-data. The framework identifies it
       from META-INF/xposed/ instead: module.prop (min/target API), java_init.list (the entry

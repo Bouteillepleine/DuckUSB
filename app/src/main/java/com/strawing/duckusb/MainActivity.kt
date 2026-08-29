@@ -108,6 +108,8 @@ class MainActivity : AppCompatActivity() {
             addView(toggleRow("🐞", "Verbose logging",
                 "One log line per injection. For troubleshooting a hook that won't install.",
                 Config.KEY_VERBOSE_LOG, default = false))
+            addView(thinDivider())
+            addView(updateRow())
         })
         root.addView(scopeHintCard())
         root.addView(footer())
@@ -649,6 +651,76 @@ class MainActivity : AppCompatActivity() {
         return col
     }
 
+    /**
+     * Manual update check. Tapped, never automatic — see [Updater]. The interesting case is
+     * [Updater.Result.Blocked]: from 1.4.0 a release can require a newer framework than the one
+     * running, and offering it anyway would push the user onto a build their LSPosed will not
+     * even list.
+     */
+    private fun updateRow(): View {
+        val row = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(0, dp(12), 0, dp(12))
+        }
+        row.addView(TextView(this).apply {
+            text = "⬆️"
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 20f)
+            setPadding(0, 0, dp(14), 0)
+        })
+        val title = TextView(this).apply {
+            text = "Check for updates"
+            setTextColor(cOnSurface)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 15.5f)
+            typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+        }
+        val detail = TextView(this).apply {
+            text = "v${appVersion()} · tap to check GitHub"
+            setTextColor(cOnSurfaceVar)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 12.5f)
+            setPadding(0, dp(2), 0, 0)
+        }
+        row.addView(LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+            addView(title)
+            addView(detail)
+        })
+
+        var busy = false
+        var openUrl: String? = null
+        row.setOnClickListener {
+            openUrl?.let { url ->
+                startActivity(android.content.Intent(
+                    android.content.Intent.ACTION_VIEW, android.net.Uri.parse(url)))
+                return@setOnClickListener
+            }
+            if (busy) return@setOnClickListener
+            busy = true
+            detail.text = "Checking…"
+            val code = appVersionCode()
+            val api = runCatching { DuckApp.service?.apiVersion }.getOrNull()
+            Thread {
+                val r = Updater.check(code, api)
+                runOnUiThread {
+                    busy = false
+                    when (r) {
+                        is Updater.Result.Available -> {
+                            detail.text = "${r.versionName} available — tap to download"
+                            openUrl = r.downloadUrl
+                        }
+                        is Updater.Result.Blocked ->
+                            detail.text = "${r.versionName} needs libxposed API ${r.needsApi}; " +
+                                "yours reports ${r.hasApi}. Staying on v${appVersion()}."
+                        Updater.Result.UpToDate -> detail.text = "v${appVersion()} · up to date"
+                        is Updater.Result.Failed -> detail.text = "Couldn't check (${r.reason})"
+                    }
+                }
+            }.start()
+        }
+        return row
+    }
+
     private fun toggleRow(
         icon: String, title: String, subtitle: String, key: String,
         default: Boolean = true,
@@ -849,6 +921,13 @@ class MainActivity : AppCompatActivity() {
     private fun appVersion(): String = try {
         packageManager.getPackageInfo(packageName, 0).versionName ?: "?"
     } catch (t: Throwable) { "?" }
+
+    @Suppress("DEPRECATION")
+    private fun appVersionCode(): Long = try {
+        val info = packageManager.getPackageInfo(packageName, 0)
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.P) info.longVersionCode
+        else info.versionCode.toLong()
+    } catch (t: Throwable) { Long.MAX_VALUE }  // unknown: never offer an "update"
 
     private fun dp(v: Int): Int =
         TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, v.toFloat(), resources.displayMetrics).toInt()

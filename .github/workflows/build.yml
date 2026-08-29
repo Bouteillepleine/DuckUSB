@@ -147,11 +147,50 @@ jobs:
 
           echo "APK verification passed."
 
+      - name: Build update.json
+        # Only tags publish, so only tags need it. Generated HERE rather than in the release
+        # job because that job has no checkout — it only downloads the artifact.
+        #
+        # minApiVersion is the load-bearing field, and it is read out of the built APK rather
+        # than hardcoded so the JSON cannot drift from what shipped. A modern module is not
+        # merely refused by an older framework, it is never listed at all, so the in-app check
+        # must be able to hold those users back instead of offering a build that does nothing.
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_REF_NAME}"
+          APK=app/build/outputs/apk/release/app-release.apk
+          NAME="DuckUSB-${TAG}.apk"
+          MIN_API=$(unzip -p "$APK" META-INF/xposed/module.prop | sed -n 's/^minApiVersion=//p' | tr -d '\r')
+          [ -n "$MIN_API" ] || { echo "module.prop declares no minApiVersion"; exit 1; }
+          VERSION_CODE=$(grep -oE 'versionCode *= *[0-9]+' app/build.gradle.kts | grep -oE '[0-9]+')
+          [ -n "$VERSION_CODE" ] || { echo "cannot read versionCode"; exit 1; }
+          cat > update.json <<JSON
+          {
+            "schemaVersion": 1,
+            "versionName": "${TAG#v}",
+            "versionCode": ${VERSION_CODE},
+            "minApiVersion": ${MIN_API},
+            "builtAtUtc": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+            "commit": { "sha": "${GITHUB_SHA}" },
+            "apk": {
+              "name": "${NAME}",
+              "downloadUrl": "https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}/${NAME}",
+              "sizeBytes": $(stat -c%s "$APK"),
+              "sha256": "$(sha256sum "$APK" | cut -d' ' -f1)"
+            }
+          }
+          JSON
+          cat update.json
+          python3 -c "import json;json.load(open('update.json'))" && echo "update.json is valid JSON"
+
       - name: Upload APK
         uses: actions/upload-artifact@v7
         with:
           name: DuckUSB-release
-          path: app/build/outputs/apk/release/app-release.apk
+          path: |
+            app/build/outputs/apk/release/app-release.apk
+            update.json
           if-no-files-found: error
 
   release:
@@ -184,7 +223,7 @@ jobs:
         run: |
           set -euo pipefail
           TAG="${GITHUB_REF_NAME}"
-          gh release create "$TAG" "DuckUSB-${TAG}.apk" \
+          gh release create "$TAG" "DuckUSB-${TAG}.apk" update.json \
             --repo "$GITHUB_REPOSITORY" \
             --title "$TAG" \
             --generate-notes
