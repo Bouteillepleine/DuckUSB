@@ -104,12 +104,17 @@ class MainActivity : AppCompatActivity() {
         root.addView(diagHolder)
 
         root.addView(sectionLabel("Setup"))
+        // One child only: outlinedCard() is a MaterialCardView, i.e. a FrameLayout, so sibling
+        // rows added straight to it draw on top of each other instead of stacking.
         root.addView(outlinedCard().apply {
-            addView(toggleRow("🐞", "Verbose logging",
-                "One log line per injection. For troubleshooting a hook that won't install.",
-                Config.KEY_VERBOSE_LOG, default = false))
-            addView(thinDivider())
-            addView(updateRow())
+            addView(LinearLayout(this@MainActivity).apply {
+                orientation = LinearLayout.VERTICAL
+                addView(toggleRow("🐞", "Verbose logging",
+                    "One log line per injection. For troubleshooting a hook that won't install.",
+                    Config.KEY_VERBOSE_LOG, default = false))
+                addView(thinDivider())
+                addView(updateRow())
+            })
         })
         root.addView(scopeHintCard())
         root.addView(footer())
@@ -811,7 +816,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun footer(): View = TextView(this).apply {
-        text = "v${appVersion()} · author XxxY"
+        text = "v${appVersion()} by XxxY"
         setTextColor(cOnSurfaceVar); alpha = 0.7f; gravity = Gravity.CENTER
         setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f)
         setPadding(0, dp(18), 0, 0)
