@@ -184,12 +184,20 @@ jobs:
           cat update.json
           python3 -c "import json;json.load(open('update.json'))" && echo "update.json is valid JSON"
 
+      - name: Stage release files
+        # upload-artifact roots the archive at the common ancestor of everything it is given.
+        # Mixing app/build/outputs/... with a workspace-root update.json therefore buried the
+        # APK under app/build/outputs/apk/release/, and the release job does a flat
+        # `mv app-release.apk` — which only breaks on a tag build, i.e. exactly when it ships.
+        # Stage both files at the root so the artifact stays flat.
+        run: cp app/build/outputs/apk/release/app-release.apk ./app-release.apk
+
       - name: Upload APK
         uses: actions/upload-artifact@v7
         with:
           name: DuckUSB-release
           path: |
-            app/build/outputs/apk/release/app-release.apk
+            app-release.apk
             update.json
           if-no-files-found: error
 
