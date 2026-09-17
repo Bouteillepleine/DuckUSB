@@ -91,7 +91,8 @@ object SystemServerPart {
             val hooked = when {
                 m.name == "call" && m.parameterCount >= 3 -> XHook.hook(m, ::onProviderCall)
                 m.name == "query" && m.parameterCount >= 3 -> XHook.hook(m, ::onProviderQuery)
-                m.name in SETTING_GETTERS -> XHook.hook(m, ::onGetSetting)
+                m.name in SETTING_GETTERS && ModuleConfig.config.hookGetters ->
+                    XHook.hook(m, ::onGetSetting)
                 else -> false
             }
             if (hooked) {
@@ -102,6 +103,29 @@ object SystemServerPart {
         service?.hookCount = count
         service?.installedAtRealtimeMs = SystemClock.elapsedRealtime()
         Logx.i("settings provider hooked: $count methods on ${clazz.name}")
+        selfTest(clazz)
+    }
+
+    private fun selfTest(clazz: Class<*>) {
+        val provider = runCatching { localProvider(Config.SETTINGS_AUTHORITY) }.getOrNull() ?: return
+        runCatching {
+            val method = clazz.getDeclaredMethod(
+                "call", String::class.java, String::class.java, Bundle::class.java
+            ).apply { isAccessible = true }
+            method.invoke(provider, "GET_global", "adb_enabled", null)
+        }.onFailure { Logx.e("self-test call failed", it) }
+        runCatching {
+            val method = clazz.getDeclaredMethod(
+                "query", android.net.Uri::class.java, Array<String>::class.java,
+                String::class.java, Array<String>::class.java, String::class.java
+            ).apply { isAccessible = true }
+            (method.invoke(
+                provider,
+                android.net.Uri.parse("content://settings/global"),
+                null, "name=?", arrayOf("adb_enabled"), null
+            ) as? Cursor)?.close()
+        }.onFailure { Logx.e("self-test query failed", it) }
+        Logx.i("self-test: call=${if (callHookSeen) "fired" else "dead"} query=${if (queryHookSeen) "fired" else "dead"}")
     }
 
     private fun callingUid(): Int? = try {

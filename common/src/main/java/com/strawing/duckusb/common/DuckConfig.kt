@@ -10,6 +10,7 @@ data class DuckConfig(
     var hideNotif: Boolean = true,
     var coverQueryPath: Boolean = true,
     var verboseLog: Boolean = false,
+    var hookGetters: Boolean = false,
     var targets: MutableSet<String> = LinkedHashSet(),
 ) {
     fun isTarget(pkg: String?): Boolean {
@@ -26,6 +27,7 @@ data class DuckConfig(
         put(KEY_HIDE_NOTIF, hideNotif)
         put(KEY_COVER_QUERY, coverQueryPath)
         put(KEY_VERBOSE, verboseLog)
+        put(KEY_HOOK_GETTERS, hookGetters)
         put(KEY_TARGETS, JSONArray(targets.toList()))
     }.toString(2)
 
@@ -39,6 +41,7 @@ data class DuckConfig(
         private const val KEY_HIDE_NOTIF = "hideNotif"
         private const val KEY_COVER_QUERY = "coverQueryPath"
         private const val KEY_VERBOSE = "verboseLog"
+        private const val KEY_HOOK_GETTERS = "hookGetters"
         private const val KEY_TARGETS = "targets"
 
         fun parse(text: String?): DuckConfig {
@@ -56,6 +59,7 @@ data class DuckConfig(
                     hideNotif = o.optBoolean(KEY_HIDE_NOTIF, true),
                     coverQueryPath = o.optBoolean(KEY_COVER_QUERY, true),
                     verboseLog = o.optBoolean(KEY_VERBOSE, false),
+                    hookGetters = o.optBoolean(KEY_HOOK_GETTERS, false),
                     targets = targets,
                 )
             } catch (_: Throwable) {
