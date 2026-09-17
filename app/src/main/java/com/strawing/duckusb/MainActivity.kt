@@ -37,6 +37,7 @@ class MainActivity : AppCompatActivity() {
     private var svcState: Bundle? = null
     private var svcRecords: List<Bundle> = emptyList()
     private var rootSettings: Map<String, String> = emptyMap()
+    private var serviceSettings: Map<String, String> = emptyMap()
     private var rootProps: Map<String, String> = emptyMap()
     private var rootAvailable = false
     private var propMaskInstalled = false
@@ -92,8 +93,16 @@ class MainActivity : AppCompatActivity() {
                 ?.let { runCatching { it.records }.getOrNull() }
                 .orEmpty()
                 .sortedByDescending { it.getInt("count") }
+            val truth = DuckServiceClient.get(this)?.let {
+                runCatching { it.getTrueSettings(SETTING_KEYS.toTypedArray()) }.getOrNull()
+            }
             val snapshot = RootTools.snapshot(SETTING_KEYS, PROP_KEYS)
             runOnUiThread {
+                serviceSettings = truth?.let { bundle ->
+                    SETTING_KEYS.mapNotNull { key ->
+                        bundle.getString(key)?.takeIf { it.isNotEmpty() }?.let { key to it }
+                    }.toMap()
+                } ?: emptyMap()
                 svcState = state
                 svcRecords = records
                 rootAvailable = snapshot.rootAvailable
@@ -343,16 +352,16 @@ class MainActivity : AppCompatActivity() {
         val card = ui.outlinedCard()
         val col = ui.column()
         for (key in SETTING_KEYS) {
-            col.addView(ui.readingRow(key, globalSetting(key), rootSettings[key]))
+            col.addView(ui.readingRow(key, globalSetting(key), serviceSettings[key] ?: rootSettings[key]))
         }
         col.addView(ui.thinDivider())
         for (key in PROP_KEYS) {
             col.addView(ui.readingRow(key, systemProperty(key), rootProps[key]))
         }
         col.addView(ui.noteRow(
-            "Left chip is what this app reads, right chip is what root reads. DuckUSB never " +
-                "spoofs itself, so a mismatch here means something else on this device is " +
-                "spoofing this app."
+            "Left chip is what this app reads, right chip is the real value read in " +
+                "system_server (or by root for the properties). DuckUSB never spoofs itself, so " +
+                "a mismatch here means something else on this device is spoofing this app."
         ))
         card.addView(col)
         return card

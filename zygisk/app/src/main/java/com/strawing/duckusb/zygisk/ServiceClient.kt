@@ -32,6 +32,13 @@ object ServiceClient {
     fun records(context: Context): List<Bundle> =
         runCatching { get(context)?.records }.getOrNull() ?: emptyList()
 
+    fun trueSettings(context: Context, keys: Array<String>): Map<String, String> {
+        val bundle = runCatching { get(context)?.getTrueSettings(keys) }.getOrNull() ?: return emptyMap()
+        return keys.mapNotNull { key ->
+            bundle.getString(key)?.takeIf { it.isNotEmpty() }?.let { key to it }
+        }.toMap()
+    }
+
     fun clearRecords(context: Context) {
         runCatching { get(context)?.clearRecords() }
     }

@@ -6,4 +6,5 @@ interface IDuckService {
     void pushConfig(in Bundle config);
     List<Bundle> getRecords();
     void clearRecords();
+    Bundle getTrueSettings(in String[] keys);
 }

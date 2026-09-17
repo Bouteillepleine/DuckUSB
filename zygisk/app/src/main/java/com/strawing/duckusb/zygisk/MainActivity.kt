@@ -45,6 +45,7 @@ class MainActivity : AppCompatActivity() {
     private var zygiskFlavor = "unknown"
     private var moduleVersion: String? = null
     private var rootSettings: Map<String, String> = emptyMap()
+    private var serviceSettings: Map<String, String> = emptyMap()
     private var rootProps: Map<String, String> = emptyMap()
     private var loaded = false
     private var tab = R.id.tab_status
@@ -135,6 +136,7 @@ class MainActivity : AppCompatActivity() {
             val state = ServiceClient.state(this)
             val callers = ServiceClient.records(this)
                 .sortedByDescending { it.getInt(Bridge.REC_COUNT) }
+            val truth = ServiceClient.trueSettings(this, Config.SPOOF_KEYS.toTypedArray())
             runOnUiThread {
                 rootAvailable = snapshot.rootAvailable
                 moduleInstalled = snapshot.moduleInstalled
@@ -146,6 +148,7 @@ class MainActivity : AppCompatActivity() {
                 rootProps = snapshot.props
                 serviceState = state
                 records = callers
+                serviceSettings = truth
                 loaded = true
                 render()
             }
@@ -491,7 +494,7 @@ class MainActivity : AppCompatActivity() {
             setPadding(dp(16), dp(14), dp(16), dp(14))
         }
         for (key in Config.SPOOF_KEYS) {
-            col.addView(readingRow(key, globalSetting(key), rootSettings[key]))
+            col.addView(readingRow(key, globalSetting(key), serviceSettings[key] ?: rootSettings[key]))
         }
         col.addView(thinDivider())
         for (key in PROP_KEYS) {

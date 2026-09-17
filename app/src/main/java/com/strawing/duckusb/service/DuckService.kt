@@ -22,7 +22,7 @@ class DuckService(private val context: Context) : IDuckService.Stub() {
 
     companion object {
         /** Bump when the interface changes so the UI can warn about a stale service. */
-        const val VERSION = 1
+        const val VERSION = 2
 
         /** Hard cap so a hostile/chatty device can't grow this without bound. */
         private const val MAX_RECORDS = 256
@@ -175,5 +175,28 @@ class DuckService(private val context: Context) : IDuckService.Stub() {
     override fun clearRecords() {
         enforceCaller()
         synchronized(lock) { records.clear() }
+    }
+
+    /**
+     * The unspoofed values, read here in system_server where nothing lies to us. Lets the UI
+     * show the real device state without needing root.
+     */
+    override fun getTrueSettings(keys: Array<out String>?): Bundle {
+        enforceCaller()
+        val out = Bundle()
+        if (keys == null) return out
+        val token = Binder.clearCallingIdentity()
+        try {
+            for (key in keys) {
+                if (key.isNullOrEmpty()) continue
+                val value = runCatching {
+                    android.provider.Settings.Global.getString(context.contentResolver, key)
+                }.getOrNull()
+                out.putString(key, value ?: "")
+            }
+        } finally {
+            Binder.restoreCallingIdentity(token)
+        }
+        return out
     }
 }

@@ -13,7 +13,7 @@ import com.strawing.duckusb.zygote.util.ModuleConfig
 class DuckService(private val context: Context) : IDuckService.Stub() {
 
     companion object {
-        const val VERSION = 3
+        const val VERSION = 4
         private const val MAX_RECORDS = 256
     }
 
@@ -122,5 +122,28 @@ class DuckService(private val context: Context) : IDuckService.Stub() {
     override fun clearRecords() {
         enforceCaller()
         synchronized(lock) { records.clear() }
+    }
+
+    /**
+     * The unspoofed values, read here in system_server where nothing lies to us. Lets the UI
+     * show the real device state without needing root.
+     */
+    override fun getTrueSettings(keys: Array<out String>?): Bundle {
+        enforceCaller()
+        val out = Bundle()
+        if (keys == null) return out
+        val token = Binder.clearCallingIdentity()
+        try {
+            for (key in keys) {
+                if (key.isNullOrEmpty()) continue
+                val value = runCatching {
+                    android.provider.Settings.Global.getString(context.contentResolver, key)
+                }.getOrNull()
+                out.putString(key, value ?: "")
+            }
+        } finally {
+            Binder.restoreCallingIdentity(token)
+        }
+        return out
     }
 }
