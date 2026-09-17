@@ -7,6 +7,7 @@ import com.strawing.duckusb.zygote.hook.Frame
 import com.strawing.duckusb.zygote.hook.XHook
 import com.strawing.duckusb.zygote.util.Logx
 import com.strawing.duckusb.zygote.util.ModuleConfig
+import java.lang.reflect.Field
 import kotlin.concurrent.thread
 
 object SystemServerPart {
@@ -14,6 +15,8 @@ object SystemServerPart {
     private const val NMS_CLASS = "com.android.server.notification.NotificationManagerService"
 
     private const val SETTLE_MS = 8000L
+    private const val SWEEP_PASSES = 20
+    private const val SWEEP_INTERVAL_MS = 2000L
 
     @Volatile
     var blocked = 0
@@ -61,49 +64,106 @@ object SystemServerPart {
             if (XHook.hook(m, ::onEnqueue)) count++
         }
         Logx.i("notification suppressor armed: $count methods, strings=$adbStrings")
-        if (count > 0) cancelAlreadyPosted()
+        if (count > 0) sweepAlreadyPosted()
     }
 
-    private fun cancelAlreadyPosted() {
+    private fun sweepAlreadyPosted() {
+        val service = notificationService() ?: run {
+            Logx.e("no notification service, cannot clear what was posted during boot")
+            return
+        }
+        val server = outerInstance(service)
+        if (server == null) Logx.i("notification service internals unavailable, using the public list")
+        var total = 0
+        for (pass in 0 until SWEEP_PASSES) {
+            total += sweepOnce(service, server, pass == 0)
+            if (total > 0) break
+            Thread.sleep(SWEEP_INTERVAL_MS)
+        }
+        if (total == 0) Logx.i("no adb notification was posted before arming")
+    }
+
+    private fun sweepOnce(service: Any, server: Any?, first: Boolean): Int {
+        val posted = postedFromServer(server) ?: activeNotifications(service) ?: run {
+            if (first) Logx.e("could not list the posted notifications")
+            return 0
+        }
+        if (first) Logx.i("sweeping ${posted.size} posted notifications")
+        var cleared = 0
+        for (sbn in posted) {
+            if (sbn == null) continue
+            val notification = invoke(sbn, "getNotification") as? Notification ?: continue
+            if (!isAdbNotification(notification)) continue
+            val pkg = invoke(sbn, "getPackageName") as? String ?: continue
+            val tag = invoke(sbn, "getTag") as? String
+            val id = invoke(sbn, "getId") as? Int ?: continue
+            val userId = invoke(sbn, "getUserId") as? Int ?: 0
+            if (cancelOne(service, pkg, tag, id, userId)) {
+                cleared++
+                Logx.i("cleared the adb notification already posted by $pkg (id=$id)")
+            } else {
+                Logx.e("could not cancel the adb notification from $pkg (id=$id)")
+            }
+        }
+        return cleared
+    }
+
+    private fun notificationService(): Any? {
         val binder = runCatching {
             Class.forName("android.os.ServiceManager")
                 .getDeclaredMethod("getService", String::class.java)
                 .apply { isAccessible = true }
                 .invoke(null, "notification")
-        }.getOrNull() ?: run {
-            Logx.e("no notification service, cannot clear what was posted during boot")
-            return
-        }
-        val service = runCatching {
+        }.getOrNull() ?: return null
+        return runCatching {
             Class.forName("android.app.INotificationManager\$Stub")
                 .getDeclaredMethod("asInterface", Class.forName("android.os.IBinder"))
                 .invoke(null, binder)
-        }.getOrNull() ?: return
-
-        val active = activeNotifications(service) ?: run {
-            Logx.e("could not list active notifications")
-            return
-        }
-        var cleared = 0
-        for (sbn in active) {
-            if (sbn == null) continue
-            val notification = runCatching {
-                sbn.javaClass.getMethod("getNotification").invoke(sbn) as? Notification
-            }.getOrNull() ?: continue
-            if (!isAdbNotification(notification)) continue
-            val pkg = runCatching { sbn.javaClass.getMethod("getPackageName").invoke(sbn) as? String }.getOrNull() ?: continue
-            val tag = runCatching { sbn.javaClass.getMethod("getTag").invoke(sbn) as? String }.getOrNull()
-            val id = runCatching { sbn.javaClass.getMethod("getId").invoke(sbn) as? Int }.getOrNull() ?: continue
-            val userId = runCatching { sbn.javaClass.getMethod("getUserId").invoke(sbn) as? Int }.getOrNull() ?: 0
-            if (cancelOne(service, pkg, tag, id, userId)) {
-                cleared++
-                Logx.i("cleared the adb notification already posted by $pkg (id=$id)")
-            }
-        }
-        if (cleared == 0) Logx.i("no adb notification was posted before arming")
+        }.getOrNull()
     }
 
-    private fun activeNotifications(service: Any): Array<*>? {
+    private fun outerInstance(service: Any): Any? {
+        var cls: Class<*>? = service.javaClass
+        while (cls != null) {
+            for (f in cls.declaredFields) {
+                if (!f.name.startsWith("this$")) continue
+                val value = runCatching { f.apply { isAccessible = true }.get(service) }.getOrNull()
+                if (value != null) return value
+            }
+            cls = cls.superclass
+        }
+        return null
+    }
+
+    private fun postedFromServer(server: Any?): List<Any?>? {
+        if (server == null) return null
+        val field = findField(server.javaClass, "mNotificationList") ?: return null
+        val list = runCatching { field.get(server) as? Collection<*> }.getOrNull() ?: return null
+        val copy = synchronized(list) { ArrayList<Any?>(list) }
+        return copy.mapNotNull { record ->
+            if (record == null) null else invoke(record, "getSbn") ?: fieldValue(record, "sbn")
+        }
+    }
+
+    private fun findField(start: Class<*>, name: String): Field? {
+        var cls: Class<*>? = start
+        while (cls != null) {
+            val found = cls
+            val f = runCatching { found.getDeclaredField(name).apply { isAccessible = true } }.getOrNull()
+            if (f != null) return f
+            cls = cls.superclass
+        }
+        return null
+    }
+
+    private fun fieldValue(target: Any, name: String): Any? =
+        findField(target.javaClass, name)?.let { runCatching { it.get(target) }.getOrNull() }
+
+    private fun invoke(target: Any, name: String): Any? = runCatching {
+        target.javaClass.getMethod(name).apply { isAccessible = true }.invoke(target)
+    }.getOrNull()
+
+    private fun activeNotifications(service: Any): List<Any?>? {
         for (m in service.javaClass.methods) {
             if (!m.name.startsWith("getActiveNotifications")) continue
             val args: Array<Any?> = when (m.parameterTypes.size) {
@@ -112,7 +172,7 @@ object SystemServerPart {
                 else -> continue
             }
             val result = runCatching { m.invoke(service, *args) }.getOrNull()
-            if (result is Array<*>) return result
+            if (result is Array<*>) return result.toList()
         }
         return null
     }
