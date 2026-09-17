@@ -13,6 +13,7 @@ object NativeProps {
     fun install(overrides: Map<String, String>): Boolean {
         try {
             if (!loaded) {
+                runCatching { System.loadLibrary("shadowhook") }
                 System.loadLibrary("duckusb")
                 loaded = true
             }

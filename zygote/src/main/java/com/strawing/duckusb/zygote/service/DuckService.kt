@@ -85,6 +85,7 @@ class DuckService(private val context: Context) : IDuckService.Stub() {
     }
 
     fun isTarget(uid: Int): Boolean {
+        if (config.targets.isEmpty()) return false
         if (uid % Config.PER_USER_RANGE < Config.FIRST_APP_UID) return false
         if (callerAppId >= 0 && uid % Config.PER_USER_RANGE == callerAppId) return false
         if (isSpared(uid)) return false
