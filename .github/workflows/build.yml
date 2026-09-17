@@ -213,6 +213,37 @@ jobs:
             --title "Xposed ${VERSION}" \
             --generate-notes
 
+      - name: Publish to the Xposed module repository
+        # LSPosed's manager does not read this repo. It reads
+        # Xposed-Modules-Repo/com.strawing.duckusb, a separate listing with its own releases
+        # tagged {versionCode}-{versionName}, and an APK must be attached or the module never
+        # appears. GITHUB_TOKEN cannot write across repositories, so this needs a PAT with
+        # contents:write on the listing; without the secret the step reports and skips rather
+        # than failing the release that already succeeded.
+        env:
+          GH_TOKEN: ${{ secrets.XPOSED_REPO_TOKEN }}
+          LISTING: Xposed-Modules-Repo/com.strawing.duckusb
+        run: |
+          set -euo pipefail
+          if [ -z "${GH_TOKEN:-}" ]; then
+            echo "::warning::No XPOSED_REPO_TOKEN secret; the LSPosed listing was not updated."
+            exit 0
+          fi
+          TAG="${GITHUB_REF_NAME}"
+          VERSION="${TAG#xposed-v}"
+          CODE=$(sed -n 's/.*"versionCode"[^0-9]*\([0-9]\+\).*/\1/p' update.json | head -1)
+          [ -n "$CODE" ] || { echo "cannot read versionCode from update.json"; exit 1; }
+          LISTING_TAG="${CODE}-${VERSION}"
+          if gh release view "$LISTING_TAG" --repo "$LISTING" >/dev/null 2>&1; then
+            echo "::warning::$LISTING already has $LISTING_TAG; leaving it alone."
+            exit 0
+          fi
+          gh release create "$LISTING_TAG" "DuckUSB-${VERSION}.apk" \
+            --repo "$LISTING" \
+            --title "${VERSION}" \
+            --notes "Release notes: https://github.com/${GITHUB_REPOSITORY}/releases/tag/${TAG}"
+          echo "published $LISTING_TAG to $LISTING"
+
   release-zygisk:
     # Publishes the Zygisk module zip and its manager, from a zygisk-v* tag.
     if: startsWith(github.ref, 'refs/tags/zygisk-v')
