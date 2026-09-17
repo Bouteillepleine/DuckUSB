@@ -42,6 +42,10 @@ JDK 21. The Zygisk half needs NDK 29 and CMake 3.31.6 (LSPlant + Dobby). Signing
 
 Don't rotate the signing key — Android identifies an app by its signature, so a differently signed build cannot update an installed one.
 
+## Releases
+
+The two variants ship independently, from prefixed tags: `xposed-v2.0.0` publishes the Xposed APK, `zygisk-v2.0.0` the module zip and its manager. A fix to one never forces a version bump on the other.
+
 ## Tested on
 
 OnePlus 15 (CPH2747), OxygenOS, Android 16, KernelSU Next + ReZygisk + LSPosed. Both variants report clean on Duck Detector. Other ROMs are unknown, though the provider is matched by authority and the guards key off uid rather than OEM package names.

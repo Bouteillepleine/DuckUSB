@@ -3,7 +3,7 @@ name: Build
 on:
   push:
     branches: [ master, 'merge-*', 'libxposed-*' ]
-    tags: [ 'v*' ]
+    tags: [ 'xposed-v*', 'zygisk-v*' ]
   pull_request:
   workflow_dispatch:
 
@@ -145,12 +145,13 @@ jobs:
       - name: Build update.json
         # Only tags publish, so only tags need it. minApiVersion is read out of the built APK
         # rather than hardcoded, so the JSON cannot drift from what shipped.
-        if: startsWith(github.ref, 'refs/tags/v')
+        if: startsWith(github.ref, 'refs/tags/xposed-v')
         run: |
           set -euo pipefail
           TAG="${GITHUB_REF_NAME}"
+          VERSION="${TAG#xposed-v}"
           APK=DuckUSB-xposed.apk
-          NAME="DuckUSB-${TAG}.apk"
+          NAME="DuckUSB-${VERSION}.apk"
           MIN_API=$(unzip -p "$APK" META-INF/xposed/module.prop | sed -n 's/^minApiVersion=//p' | tr -d '\r')
           [ -n "$MIN_API" ] || { echo "module.prop declares no minApiVersion"; exit 1; }
           VERSION_CODE=$(grep -oE 'versionCode *= *[0-9]+' app/build.gradle.kts | grep -oE '[0-9]+')
@@ -158,7 +159,7 @@ jobs:
           cat > update.json <<JSON
           {
             "schemaVersion": 1,
-            "versionName": "${TAG#v}",
+            "versionName": "${VERSION}",
             "versionCode": ${VERSION_CODE},
             "minApiVersion": ${MIN_API},
             "builtAtUtc": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
@@ -184,9 +185,11 @@ jobs:
             update.json
           if-no-files-found: error
 
-  release:
-    # Publishes only for a v* tag, reusing the artifact the build job already verified.
-    if: startsWith(github.ref, 'refs/tags/v')
+  release-xposed:
+    # Publishes the Xposed module only, from an xposed-v* tag. The two variants ship on their
+    # own cadence: a fix to one must not force a version bump on the other, and the in-app
+    # updater filters releases by this tag prefix.
+    if: startsWith(github.ref, 'refs/tags/xposed-v')
     needs: build
     runs-on: ubuntu-latest
     permissions:
@@ -197,20 +200,41 @@ jobs:
         with:
           name: DuckUSB-release
 
-      - name: Name the APK after the tag
-        run: |
-          set -euo pipefail
-          mv DuckUSB-xposed.apk "DuckUSB-${GITHUB_REF_NAME}.apk"
-          ls -l
-
-      - name: Publish release
+      - name: Publish
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           TAG="${GITHUB_REF_NAME}"
-          gh release create "$TAG" \
-            "DuckUSB-${TAG}.apk" DuckUSB-zygisk-manager.apk DuckUSB-Zygisk-*.zip update.json \
+          VERSION="${TAG#xposed-v}"
+          mv DuckUSB-xposed.apk "DuckUSB-${VERSION}.apk"
+          gh release create "$TAG" "DuckUSB-${VERSION}.apk" update.json \
             --repo "$GITHUB_REPOSITORY" \
-            --title "$TAG" \
+            --title "Xposed ${VERSION}" \
+            --generate-notes
+
+  release-zygisk:
+    # Publishes the Zygisk module zip and its manager, from a zygisk-v* tag.
+    if: startsWith(github.ref, 'refs/tags/zygisk-v')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download verified artifacts
+        uses: actions/download-artifact@v8
+        with:
+          name: DuckUSB-release
+
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_REF_NAME}"
+          VERSION="${TAG#zygisk-v}"
+          gh release create "$TAG" \
+            DuckUSB-Zygisk-*.zip DuckUSB-zygisk-manager.apk \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "Zygisk ${VERSION}" \
             --generate-notes

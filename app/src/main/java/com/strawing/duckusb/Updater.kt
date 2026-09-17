@@ -1,5 +1,6 @@
 package com.strawing.duckusb
 
+import org.json.JSONArray
 import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URL
@@ -19,9 +20,17 @@ import java.net.URL
  */
 object Updater {
 
-    /** `releases/latest/download/...` always resolves to the newest published release. */
-    private const val URL =
-        "https://github.com/Bouteillepleine/DuckUSB/releases/latest/download/update.json"
+    private const val REPO = "Bouteillepleine/DuckUSB"
+
+    /**
+     * Tag prefix for this variant. The repo also ships the Zygisk module, and GitHub's
+     * `releases/latest` is repo-wide — a Zygisk-only release would otherwise become "latest"
+     * and this updater would read its update.json. Releases are listed and filtered by prefix
+     * instead, so each variant only ever sees its own.
+     */
+    private const val TAG_PREFIX = "xposed-v"
+
+    private const val RELEASES = "https://api.github.com/repos/$REPO/releases?per_page=30"
 
     sealed interface Result {
         /** Newer build exists and this framework can load it. */
@@ -39,22 +48,22 @@ object Updater {
      *   requirement stated rather than silently withheld.
      */
     fun check(currentCode: Long, frameworkApi: Int?): Result {
-        val body = try {
-            (URL(URL).openConnection() as HttpURLConnection).run {
-                instanceFollowRedirects = true
-                connectTimeout = 10_000
-                readTimeout = 10_000
-                requestMethod = "GET"
-                try {
-                    if (responseCode != 200) return Result.Failed("HTTP $responseCode")
-                    inputStream.bufferedReader().use { it.readText() }
-                } finally {
-                    disconnect()
+        val listing = get(RELEASES) ?: return Result.Failed("releases unreachable")
+        val tag = try {
+            val releases = JSONArray(listing)
+            (0 until releases.length())
+                .map { releases.getJSONObject(it) }
+                .firstOrNull {
+                    !it.optBoolean("draft") && !it.optBoolean("prerelease") &&
+                        it.optString("tag_name").startsWith(TAG_PREFIX)
                 }
-            }
+                ?.optString("tag_name")
         } catch (t: Throwable) {
-            return Result.Failed(t.javaClass.simpleName)
-        }
+            return Result.Failed("bad release listing")
+        } ?: return Result.UpToDate
+
+        val body = get("https://github.com/$REPO/releases/download/$tag/update.json")
+            ?: return Result.Failed("no update.json on $tag")
 
         return try {
             val json = JSONObject(body)
@@ -68,9 +77,27 @@ object Updater {
                 return Result.Blocked(name, needsApi, frameworkApi)
             }
             val url = json.optJSONObject("apk")?.optString("downloadUrl").orEmpty()
-            Result.Available(name, url.ifEmpty { "https://github.com/Bouteillepleine/DuckUSB/releases/latest" })
+            Result.Available(name, url.ifEmpty { "https://github.com/$REPO/releases/tag/$tag" })
         } catch (t: Throwable) {
             Result.Failed("bad update.json")
         }
+    }
+
+    private fun get(url: String): String? = try {
+        (URL(url).openConnection() as HttpURLConnection).run {
+            instanceFollowRedirects = true
+            connectTimeout = 10_000
+            readTimeout = 10_000
+            requestMethod = "GET"
+            setRequestProperty("Accept", "application/vnd.github+json")
+            try {
+                if (responseCode != 200) null
+                else inputStream.bufferedReader().use { it.readText() }
+            } finally {
+                disconnect()
+            }
+        }
+    } catch (_: Throwable) {
+        null
     }
 }
