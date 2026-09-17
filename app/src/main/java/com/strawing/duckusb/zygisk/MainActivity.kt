@@ -29,6 +29,7 @@ class MainActivity : AppCompatActivity() {
     private var moduleInstalled = false
     private var hooksKilled = false
     private var live = false
+    private var injected: Set<String> = emptySet()
 
     private val cPrimary get() = attr(MR.attr.colorPrimary)
     private val cOnSurface get() = attr(MR.attr.colorOnSurface)
@@ -74,6 +75,11 @@ class MainActivity : AppCompatActivity() {
         hooksKilled = moduleInstalled && Root.hooksKilled()
         config = (if (moduleInstalled) Root.readConfig() else null) ?: config
         live = runCatching { System.getProperty(Config.LIVE_PROPERTY) != null }.getOrDefault(false)
+        injected = if (moduleInstalled) {
+            Root.listedPackages() - setOf(Config.SYSTEM_SERVER_PACKAGE, Config.PKG, Config.ALL_PACKAGES)
+        } else {
+            emptySet()
+        }
         render()
     }
 
@@ -126,7 +132,8 @@ class MainActivity : AppCompatActivity() {
             !rootAvailable -> "Grant root to the app so it can read and write the module configuration."
             !moduleInstalled -> "Flash DuckUSB-Zygisk.zip in your root manager, then reboot."
             hooksKilled -> "The boot guard or the kill switch disabled the hooks. Turn them back on below."
-            live -> "The module is injected and its hooks are running. Scoped apps read USB debugging as off."
+            live && config.frameworkAllApps -> "Every app reads USB debugging as off, spoofed from system_server with nothing injected into them."
+            live -> "The module is running. The apps you scoped read USB debugging as off."
             else -> "The module is installed but was not injected here. Reboot, or check that Zygisk is enabled."
         }
         box.addView(TextView(this).apply {
@@ -146,12 +153,17 @@ class MainActivity : AppCompatActivity() {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(16), dp(16), dp(16), dp(16))
         }
-        box.addView(sectionLabel("Scope"))
+        box.addView(sectionLabel(if (config.frameworkAllApps) "Property spoofing" else "Scope"))
         box.addView(TextView(this).apply {
-            text = if (config.targets.isEmpty()) {
-                "No app is being lied to yet. Pick the detectors you want to fool."
-            } else {
-                "${config.targets.size} app(s) selected. Only these see USB debugging as off."
+            text = when {
+                config.frameworkAllApps && injected.isEmpty() ->
+                    "Every app already reads USB debugging as off, with nothing injected into any of them. Tick an app below only if you also want sys.usb.* spoofed inside it — that injects, and a memory scan can see it."
+                config.frameworkAllApps ->
+                    "Every app already reads USB debugging as off. ${injected.size} app(s) are also injected for sys.usb.* spoofing, which a memory scan can see."
+                config.targets.isEmpty() ->
+                    "No app is being lied to yet. Pick the detectors you want to fool."
+                else ->
+                    "${config.targets.size} app(s) selected. Only these see USB debugging as off."
             }
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
             setTextColor(cOnSurfaceVar)
@@ -193,6 +205,31 @@ class MainActivity : AppCompatActivity() {
         )
         box.addView(thinDivider())
         box.addView(
+            toggleRow(
+                "Framework mode",
+                "Spoofs from system_server instead of inside apps. Nothing is injected into the app being fooled.",
+                config.frameworkMode,
+            ) {
+                config.frameworkMode = it
+                config.hookSystemServer = it || config.hideNotif
+                save()
+                reload()
+            }
+        )
+        box.addView(thinDivider())
+        box.addView(
+            toggleRow(
+                "Cover every app",
+                "Framework mode lies to every app, with no scope list. Shell, system uids and file-transfer apps still see the truth.",
+                config.frameworkAllApps,
+            ) {
+                config.frameworkAllApps = it
+                save()
+                reload()
+            }
+        )
+        box.addView(thinDivider())
+        box.addView(
             toggleRow("Cover the query path", "Also rewrites bulk cursor reads of the settings tables, not just the getters.", config.coverQueryPath) {
                 config.coverQueryPath = it
                 save()
@@ -207,8 +244,9 @@ class MainActivity : AppCompatActivity() {
         )
         box.addView(thinDivider())
         box.addView(
-            toggleRow("Hide the notification", "Swallows the persistent USB debugging notification.", config.hideNotif) {
+            toggleRow("Hide the notification", "Swallows the persistent USB debugging notification. Runs in system_server, armed after boot.", config.hideNotif) {
                 config.hideNotif = it
+                config.hookSystemServer = it || config.frameworkMode
                 save()
             }
         )
@@ -254,7 +292,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun footer(): View = TextView(this).apply {
-        text = "Module id ${Config.MODULE_ID} · scope changes apply when an app restarts"
+        text = "Module id ${Config.MODULE_ID} · app scope applies on app restart, framework and notification changes on reboot"
         setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f)
         setTextColor(cOnSurfaceVar)
         gravity = Gravity.CENTER

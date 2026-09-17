@@ -46,6 +46,17 @@ class ScopeActivity : AppCompatActivity() {
             setPadding(dp(12), dp(8), dp(12), 0)
         }
 
+        container.addView(TextView(this).apply {
+            text = if (config.frameworkAllApps) {
+                "Every app is already covered by framework mode. Ticking an app here injects into it to spoof sys.usb.*, which a memory scan can see."
+            } else {
+                "Ticked apps read USB debugging as off."
+            }
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
+            setTextColor(attr(MR.attr.colorOnSurfaceVariant))
+            setPadding(dp(4), 0, dp(4), dp(8))
+        })
+
         val search = EditText(this).apply {
             hint = "Search apps"
             setSingleLine()

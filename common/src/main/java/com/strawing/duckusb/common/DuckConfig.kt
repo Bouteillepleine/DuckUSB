@@ -16,26 +16,30 @@ data class DuckConfig(
     var frameworkAllApps: Boolean = false,
     var targets: MutableSet<String> = LinkedHashSet(),
 ) {
+    private var raw: String? = null
+
     fun isTarget(pkg: String?): Boolean {
         if (pkg == null) return false
         if (pkg in Config.SPARE_PACKAGES) return false
         return pkg in targets
     }
 
-    fun toJson(): String = JSONObject().apply {
-        put(KEY_VERSION, VERSION)
-        put(KEY_PAUSED, paused)
-        put(KEY_SPOOF_SETTINGS, spoofSettings)
-        put(KEY_SPOOF_PROPS, spoofProps)
-        put(KEY_HIDE_NOTIF, hideNotif)
-        put(KEY_COVER_QUERY, coverQueryPath)
-        put(KEY_VERBOSE, verboseLog)
-        put(KEY_HOOK_GETTERS, hookGetters)
-        put(KEY_HOOK_SYSTEM_SERVER, hookSystemServer)
-        put(KEY_FRAMEWORK_MODE, frameworkMode)
-        put(KEY_FRAMEWORK_ALL_APPS, frameworkAllApps)
-        put(KEY_TARGETS, JSONArray(targets.toList()))
-    }.toString(2)
+    fun toJson(): String {
+        val o = runCatching { raw?.let { JSONObject(it) } }.getOrNull() ?: JSONObject()
+        o.put(KEY_VERSION, VERSION)
+        o.put(KEY_PAUSED, paused)
+        o.put(KEY_SPOOF_SETTINGS, spoofSettings)
+        o.put(KEY_SPOOF_PROPS, spoofProps)
+        o.put(KEY_HIDE_NOTIF, hideNotif)
+        o.put(KEY_COVER_QUERY, coverQueryPath)
+        o.put(KEY_VERBOSE, verboseLog)
+        o.put(KEY_HOOK_GETTERS, hookGetters)
+        o.put(KEY_HOOK_SYSTEM_SERVER, hookSystemServer)
+        o.put(KEY_FRAMEWORK_MODE, frameworkMode)
+        o.put(KEY_FRAMEWORK_ALL_APPS, frameworkAllApps)
+        o.put(KEY_TARGETS, JSONArray(targets.toList()))
+        return o.toString(2)
+    }
 
     companion object {
         const val VERSION = 1
@@ -59,7 +63,9 @@ data class DuckConfig(
                 val o = JSONObject(text)
                 val targets = LinkedHashSet<String>()
                 o.optJSONArray(KEY_TARGETS)?.let { arr ->
-                    for (i in 0 until arr.length()) arr.optString(i)?.takeIf { it.isNotEmpty() }?.let(targets::add)
+                    for (i in 0 until arr.length()) {
+                        arr.optString(i)?.takeIf { it.isNotEmpty() }?.let(targets::add)
+                    }
                 }
                 DuckConfig(
                     paused = o.optBoolean(KEY_PAUSED, false),
@@ -73,7 +79,7 @@ data class DuckConfig(
                     frameworkMode = o.optBoolean(KEY_FRAMEWORK_MODE, false),
                     frameworkAllApps = o.optBoolean(KEY_FRAMEWORK_ALL_APPS, false),
                     targets = targets,
-                )
+                ).also { it.raw = text }
             } catch (_: Throwable) {
                 DuckConfig()
             }
