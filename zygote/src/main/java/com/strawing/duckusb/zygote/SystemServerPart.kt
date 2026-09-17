@@ -50,6 +50,7 @@ object SystemServerPart {
             return
         }
         hookContentProviderAttach()
+        hookGenericDispatch()
         hookNotificationManager()
         thread(name = "duckusb-nms", isDaemon = true) { hookNotificationManagerService() }
         thread(name = "duckusb-settings", isDaemon = true) { pollForSettingsProvider() }
@@ -107,7 +108,6 @@ object SystemServerPart {
         service?.hookCount = count
         service?.installedAtRealtimeMs = SystemClock.elapsedRealtime()
         Logx.i("settings provider hooked: $count methods on ${clazz.name}")
-        hookGenericDispatch()
         selfTest(clazz, instance)
     }
 
@@ -119,9 +119,21 @@ object SystemServerPart {
         Logx.i("generic provider dispatch hooked: $count methods")
     }
 
+    @Volatile
+    private var genericSeen = false
+
+    private fun isSettingsProvider(thisObject: Any?): Boolean {
+        if (thisObject == null) return false
+        if (thisObject === settingsProvider) return true
+        return thisObject.javaClass.name == SETTINGS_PROVIDER
+    }
+
     private fun onGenericCall(f: Frame) {
-        val target = settingsProvider
-        if (target == null || f.thisObject !== target) {
+        if (!genericSeen) {
+            genericSeen = true
+            Logx.i("generic dispatch live: this=${f.thisObject?.javaClass?.name} match=${isSettingsProvider(f.thisObject)}")
+        }
+        if (!isSettingsProvider(f.thisObject)) {
             f.proceed()
             return
         }
@@ -129,8 +141,7 @@ object SystemServerPart {
     }
 
     private fun onGenericQuery(f: Frame) {
-        val target = settingsProvider
-        if (target == null || f.thisObject !== target) {
+        if (!isSettingsProvider(f.thisObject)) {
             f.proceed()
             return
         }
