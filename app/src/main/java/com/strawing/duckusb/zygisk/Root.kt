@@ -56,6 +56,7 @@ object Root {
             "chmod 0644 ${Config.CONFIG_FILE}",
         )
         relabel(Config.CONFIG_FILE)
+        mirrorToStagedUpdate()
         return result.isSuccess
     }
 
@@ -76,6 +77,7 @@ object Root {
         val result = exec(*commands.toTypedArray())
         relabel(Config.PACKAGES_DIR)
         relabel("${Config.PACKAGES_DIR}/*")
+        mirrorToStagedUpdate()
         return result.isSuccess
     }
 
@@ -83,6 +85,15 @@ object Root {
         val result = exec("ls -1 ${Config.PACKAGES_DIR} 2>/dev/null")
         if (!result.isSuccess) return emptySet()
         return result.out.map { it.trim() }.filter { it.isNotEmpty() }.toSet()
+    }
+
+    private fun mirrorToStagedUpdate() {
+        if (!exec("test -d ${Config.MODULE_UPDATE_DIR}").isSuccess) return
+        exec(
+            "cp -af ${Config.CONFIG_FILE} ${Config.MODULE_UPDATE_DIR}/config.json",
+            "rm -rf ${Config.MODULE_UPDATE_DIR}/packages",
+            "cp -af ${Config.PACKAGES_DIR} ${Config.MODULE_UPDATE_DIR}/packages",
+        )
     }
 
     private fun moduleContext(): String? {

@@ -4,6 +4,7 @@ object Config {
     const val PKG = "com.strawing.duckusb.zygisk"
     const val MODULE_ID = "duckusb_zygisk"
     const val MODULE_DIR = "/data/adb/modules/$MODULE_ID"
+    const val MODULE_UPDATE_DIR = "/data/adb/modules_update/$MODULE_ID"
     const val CONFIG_FILE = "$MODULE_DIR/config.json"
     const val PACKAGES_DIR = "$MODULE_DIR/packages"
     const val DISABLE_FILE = "$MODULE_DIR/disable_hooks"

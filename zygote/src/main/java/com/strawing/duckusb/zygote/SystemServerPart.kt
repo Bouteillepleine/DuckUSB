@@ -93,7 +93,9 @@ object SystemServerPart {
         }
         service?.hookCount = count
         service?.installedAtRealtimeMs = SystemClock.elapsedRealtime()
-        Logx.i("settings provider hooked: $count methods on ${clazz.name}")
+        val deopt = XHook.findClass("android.content.ContentProvider")
+            ?.let { XHook.deoptimizeAll(it, "call") } ?: 0
+        Logx.i("settings provider hooked: $count methods on ${clazz.name}, deoptimized $deopt dispatchers")
     }
 
     private fun callingUid(): Int? = try {

@@ -100,6 +100,20 @@ object XHook {
         return count
     }
 
+    fun deoptimizeAll(clazz: Class<*>, name: String): Int {
+        var count = 0
+        for (m in clazz.declaredMethods) {
+            if (m.name != name) continue
+            try {
+                Hooks.deoptimize(m)
+                count++
+            } catch (t: Throwable) {
+                Logx.e("deoptimize failed on ${clazz.name}.$name", t)
+            }
+        }
+        return count
+    }
+
     fun findClass(name: String, loader: ClassLoader? = null): Class<*>? = try {
         Class.forName(name, false, loader ?: XHook::class.java.classLoader)
     } catch (_: Throwable) {

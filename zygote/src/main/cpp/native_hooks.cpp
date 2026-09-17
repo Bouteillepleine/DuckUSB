@@ -96,49 +96,10 @@ static int hooked_system_property_read(const prop_info *pi, char *name, char *va
     return n;
 }
 
-static const char kManagerPackage[] = "com.strawing.duckusb.zygisk";
-
-static bool should_skip_hooks(const char **reason) {
-    char cmd[128] = {0};
-    int fd = open("/proc/self/cmdline", O_RDONLY | O_CLOEXEC);
-    if (fd < 0) return false;
-    ssize_t n = read(fd, cmd, sizeof(cmd) - 1);
-    close(fd);
-    if (n <= 0) return false;
-    cmd[n] = '\0';
-
-    char *colon = strchr(cmd, ':');
-    if (colon) *colon = '\0';
-
-    if (strcmp(cmd, kManagerPackage) == 0) {
-        *reason = "own process";
-        return true;
-    }
-    static const char *core[] = {
-            "zygote", "zygote64", "usap32", "usap64",
-            "system_server", "android",
-            "com.android.systemui", "com.android.settings",
-            "com.android.shell", "com.android.phone",
-    };
-    for (const char *c: core) {
-        if (strcmp(cmd, c) == 0) {
-            *reason = "core OS process";
-            return true;
-        }
-    }
-    return false;
-}
-
 extern "C"
 JNIEXPORT jboolean JNICALL
 Java_com_strawing_duckusb_zygote_NativeProps_installHooks(JNIEnv *, jobject) {
     if (gHooksInstalled.load(std::memory_order_acquire)) return JNI_TRUE;
-
-    const char *reason = "";
-    if (should_skip_hooks(&reason)) {
-        LOGD("installHooks: %s, skipped", reason);
-        return JNI_FALSE;
-    }
 
     if (shadowhook_init(SHADOWHOOK_MODE_UNIQUE, false) != 0) {
         LOGD("installHooks: shadowhook_init failed errno=%d", shadowhook_get_errno());
