@@ -74,13 +74,19 @@ object SystemServerPart {
         }
         val server = outerInstance(service)
         if (server == null) Logx.i("notification service internals unavailable, using the public list")
-        var total = 0
+        var everFound = false
         for (pass in 0 until SWEEP_PASSES) {
-            total += sweepOnce(service, server, pass == 0)
-            if (total > 0) break
+            val found = sweepOnce(service, server, pass == 0)
+            if (found > 0) {
+                everFound = true
+            } else if (everFound) {
+                Logx.i("the adb notification posted during boot is gone")
+                return
+            }
             Thread.sleep(SWEEP_INTERVAL_MS)
         }
-        if (total == 0) Logx.i("no adb notification was posted before arming")
+        if (!everFound) Logx.i("no adb notification was posted before arming")
+        else Logx.e("the adb notification posted during boot would not go away")
     }
 
     private fun sweepOnce(service: Any, server: Any?, first: Boolean): Int {
@@ -89,23 +95,23 @@ object SystemServerPart {
             return 0
         }
         if (first) Logx.i("sweeping ${posted.size} posted notifications")
-        var cleared = 0
+        var found = 0
         for (sbn in posted) {
             if (sbn == null) continue
             val notification = invoke(sbn, "getNotification") as? Notification ?: continue
             if (!isAdbNotification(notification)) continue
+            found++
             val pkg = invoke(sbn, "getPackageName") as? String ?: continue
             val tag = invoke(sbn, "getTag") as? String
             val id = invoke(sbn, "getId") as? Int ?: continue
             val userId = invoke(sbn, "getUserId") as? Int ?: 0
             if (cancelOne(service, pkg, tag, id, userId)) {
-                cleared++
-                Logx.i("cleared the adb notification already posted by $pkg (id=$id)")
+                Logx.i("asked to cancel the adb notification posted by $pkg (id=$id)")
             } else {
                 Logx.e("could not cancel the adb notification from $pkg (id=$id)")
             }
         }
-        return cleared
+        return found
     }
 
     private fun notificationService(): Any? {
@@ -178,17 +184,23 @@ object SystemServerPart {
     }
 
     private fun cancelOne(service: Any, pkg: String, tag: String?, id: Int, userId: Int): Boolean {
-        for (m in service.javaClass.methods) {
-            if (m.name != "cancelNotificationWithTag") continue
-            val types = m.parameterTypes
-            val args: Array<Any?> = when (types.size) {
-                5 -> arrayOf(pkg, pkg, tag, id, userId)
-                4 -> arrayOf(pkg, tag, id, userId)
-                6 -> arrayOf(pkg, pkg, null, tag, id, userId)
-                else -> continue
+        var last: Throwable? = null
+        for (opPkg in arrayOf("android", pkg)) {
+            for (m in service.javaClass.methods) {
+                if (m.name != "cancelNotificationWithTag") continue
+                val types = m.parameterTypes
+                val args: Array<Any?> = when (types.size) {
+                    5 -> arrayOf(pkg, opPkg, tag, id, userId)
+                    4 -> arrayOf(pkg, tag, id, userId)
+                    6 -> arrayOf(pkg, opPkg, null, tag, id, userId)
+                    else -> continue
+                }
+                val attempt = runCatching { m.invoke(service, *args) }
+                if (attempt.isSuccess) return true
+                last = attempt.exceptionOrNull()
             }
-            if (runCatching { m.invoke(service, *args) }.isSuccess) return true
         }
+        if (last != null) Logx.e("the notification service refused the cancel", last)
         return false
     }
 
