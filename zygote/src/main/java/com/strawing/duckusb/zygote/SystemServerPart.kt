@@ -40,6 +40,7 @@ object SystemServerPart {
         hookContentProviderAttach()
         hookNotificationManager()
         thread(name = "duckusb-nms", isDaemon = true) { hookNotificationManagerService() }
+        thread(name = "duckusb-settings", isDaemon = true) { pollForSettingsProvider() }
     }
 
     private fun hookContentProviderAttach() {
@@ -223,6 +224,46 @@ object SystemServerPart {
         }
         val count = XHook.hookAll(nms, "enqueueNotificationInternal", 0, ::onNotify)
         Logx.i("notification service hooked: $count methods")
+    }
+
+    private fun pollForSettingsProvider() {
+        repeat(240) {
+            if (settingsHooked) return
+            val provider = runCatching { localProvider(Config.SETTINGS_AUTHORITY) }.getOrNull()
+            if (provider != null) {
+                runCatching {
+                    if (service == null) {
+                        systemContext()?.let { service = DuckService(it) }
+                    }
+                    hookSettingsProvider(provider.javaClass)
+                }.onFailure { Logx.e("late settings provider hook failed", it) }
+                return
+            }
+            Thread.sleep(500)
+        }
+        if (!settingsHooked) Logx.e("settings provider never appeared")
+    }
+
+    private fun currentActivityThread(): Any? =
+        Class.forName("android.app.ActivityThread")
+            .getDeclaredMethod("currentActivityThread")
+            .apply { isAccessible = true }
+            .invoke(null)
+
+    private fun systemContext(): Context? = runCatching {
+        val at = currentActivityThread() ?: return null
+        at.javaClass.getDeclaredMethod("getSystemContext")
+            .apply { isAccessible = true }
+            .invoke(at) as? Context
+    }.getOrNull()
+
+    private fun localProvider(authority: String): Any? {
+        val at = currentActivityThread() ?: return null
+        val field = at.javaClass.getDeclaredField("mLocalProvidersByName").apply { isAccessible = true }
+        val map = field.get(at) as? Map<*, *> ?: return null
+        val record = map[authority] ?: return null
+        val providerField = record.javaClass.getDeclaredField("mLocalProvider").apply { isAccessible = true }
+        return providerField.get(record)
     }
 
     private fun systemServerClassLoader(): ClassLoader? = try {
