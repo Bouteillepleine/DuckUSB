@@ -48,6 +48,7 @@ object NativeProps {
         try {
             if (!load(moduleDir)) return false
             if (!hooked) {
+                initShadowHook()
                 hooked = installHooks()
                 if (!hooked) return false
             }
@@ -57,6 +58,23 @@ object NativeProps {
             Logx.e("native prop spoof failed", t)
             return false
         }
+    }
+
+    private fun initShadowHook() {
+        runCatching {
+            val config = Class.forName("com.bytedance.shadowhook.ShadowHook\$ConfigBuilder")
+                .getDeclaredConstructor().newInstance()
+            val builder = config.javaClass
+            val setMode = builder.getDeclaredMethod("setMode", Class.forName("com.bytedance.shadowhook.ShadowHook\$Mode"))
+            val mode = Class.forName("com.bytedance.shadowhook.ShadowHook\$Mode")
+                .getDeclaredField("UNIQUE").get(null)
+            setMode.invoke(config, mode)
+            val built = builder.getDeclaredMethod("build").invoke(config)
+            val init = Class.forName("com.bytedance.shadowhook.ShadowHook")
+                .getDeclaredMethod("init", built.javaClass)
+            val rc = init.invoke(null, built)
+            Logx.i("shadowhook java init rc=$rc")
+        }.onFailure { Logx.e("shadowhook java init failed", it) }
     }
 
     private external fun installHooks(): Boolean

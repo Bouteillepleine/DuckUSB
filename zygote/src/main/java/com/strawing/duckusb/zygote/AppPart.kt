@@ -17,6 +17,8 @@ object AppPart {
 
     private val GETTERS = arrayOf("getInt", "getString", "getLong", "getFloat")
 
+    private const val NAME_VALUE_CACHE = "android.provider.Settings\$NameValueCache"
+
     private fun active(): Boolean {
         val config = ModuleConfig.config
         return !ModuleConfig.disabled && !config.paused
@@ -58,12 +60,27 @@ object AppPart {
 
     private fun installSettingsSpoof() {
         var count = 0
+        val cache = XHook.findClass(NAME_VALUE_CACHE)
+        if (cache != null) {
+            count += XHook.hookAll(cache, "getStringForUser", 0, ::onCachedRead)
+        } else {
+            Logx.e("NameValueCache not found")
+        }
         for (name in arrayOf("android.provider.Settings\$Global", "android.provider.Settings\$Secure")) {
             val clazz = XHook.findClass(name) ?: continue
             for (getter in GETTERS) count += XHook.hookAll(clazz, getter, 0, ::onSettingsGetter)
         }
         settingsSpoofLive = selfTest()
-        Logx.i("client settings spoof: $count getters hooked, ${if (settingsSpoofLive) "live" else "DEAD"}")
+        Logx.i("client settings spoof: $count methods hooked, ${if (settingsSpoofLive) "live" else "DEAD"}")
+    }
+
+    private fun onCachedRead(f: Frame) {
+        val key = f.args.firstOrNull { it is String } as? String
+        if (key == null || key !in Config.SPOOF_KEYS || !active()) {
+            f.proceed()
+            return
+        }
+        f.result = "0"
     }
 
     private fun onSettingsGetter(f: Frame) {
@@ -87,9 +104,19 @@ object AppPart {
         }
     }
 
-    private fun selfTest(): Boolean = try {
-        Settings.Global.getString(null, Config.SPOOF_KEYS.first()) == "0"
-    } catch (_: Throwable) {
-        false
+    private fun selfTest(): Boolean {
+        val key = Config.SPOOF_KEYS.first()
+        if (runCatching { Settings.Global.getString(null, key) }.getOrNull() == "0") return true
+        return runCatching {
+            val cache = XHook.findClass(NAME_VALUE_CACHE) ?: return false
+            val field = com.v7878.unsafe.Reflection.getDeclaredField(
+                Class.forName("android.provider.Settings\$Global"), "sNameValueCache"
+            ).apply { isAccessible = true }
+            val instance = field.get(null) ?: return false
+            val method = XHook.methodsOf(cache).firstOrNull { it.name == "getStringForUser" }
+                ?: return false
+            method.isAccessible = true
+            method.invoke(instance, null, key, 0) == "0"
+        }.getOrDefault(false)
     }
 }

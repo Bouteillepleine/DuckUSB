@@ -4,6 +4,7 @@ import com.strawing.duckusb.zygote.util.Logx
 import com.v7878.unsafe.invoke.EmulatedStackFrame
 import com.v7878.unsafe.invoke.EmulatedStackFrame.RETURN_VALUE_IDX
 import com.v7878.unsafe.invoke.Transformers
+import com.v7878.unsafe.Reflection
 import com.v7878.vmtools.HookTransformer
 import com.v7878.vmtools.Hooks
 import java.lang.invoke.MethodHandle
@@ -92,9 +93,12 @@ object XHook {
         }
     }
 
+    fun methodsOf(clazz: Class<*>): Array<out java.lang.reflect.Method> =
+        runCatching { Reflection.getDeclaredMethods(clazz) }.getOrElse { clazz.declaredMethods }
+
     fun hookAll(clazz: Class<*>, name: String, minParams: Int = 0, body: (Frame) -> Unit): Int {
         var count = 0
-        for (m in clazz.declaredMethods) {
+        for (m in methodsOf(clazz)) {
             if (m.name != name) continue
             if (m.parameterCount < minParams) continue
             if (hook(m, body)) count++
@@ -104,7 +108,7 @@ object XHook {
 
     fun deoptimizeAll(clazz: Class<*>, name: String): Int {
         var count = 0
-        for (m in clazz.declaredMethods) {
+        for (m in methodsOf(clazz)) {
             if (m.name != name) continue
             try {
                 Hooks.deoptimize(m)
