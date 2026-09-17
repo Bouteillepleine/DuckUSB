@@ -40,6 +40,12 @@ object Config {
      */
     const val KEY_VERBOSE_LOG = "verbose_log"
 
+    /** Also rewrite cursor reads of the settings tables, so a direct query agrees. */
+    const val KEY_COVER_QUERY = "cover_query_path"
+
+    /** Mask persist.sys.usb.config to "mtp" in the property area. Needs root. */
+    const val KEY_MASK_USB_PROP = "mask_usb_prop"
+
     /** Hide the persistent "USB debugging enabled" notification. */
     const val KEY_HIDE_NOTIF = "hide_notif_enabled"
 
@@ -51,7 +57,7 @@ object Config {
 
     /** Every boolean setting worth carrying across the move to remote preferences. */
     val BOOLEAN_KEYS: List<String> = listOf(
-        KEY_PAUSED, KEY_SPOOF, KEY_FRAMEWORK_MODE, KEY_CLIENT_FALLBACK, KEY_VERBOSE_LOG, KEY_HIDE_NOTIF
+        KEY_PAUSED, KEY_SPOOF, KEY_VERBOSE_LOG, KEY_HIDE_NOTIF, KEY_COVER_QUERY, KEY_MASK_USB_PROP
     )
 
     /**

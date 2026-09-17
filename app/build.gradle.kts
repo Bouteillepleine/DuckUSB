@@ -32,8 +32,8 @@ android {
         applicationId = "com.strawing.duckusb"
         minSdk = 26
         targetSdk = 35
-        versionCode = 10
-        versionName = "1.4.0"
+        versionCode = 20
+        versionName = "2.0.0"
         vectorDrawables { useSupportLibrary = true }
     }
 
@@ -96,4 +96,5 @@ dependencies {
     implementation("io.github.libxposed:service:101.0.0")
     implementation(projects.common)
     implementation(projects.ui)
+    implementation(libs.libsu.core)
 }

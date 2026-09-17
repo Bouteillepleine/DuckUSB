@@ -342,7 +342,7 @@ class DuckUSBModule : XposedModule() {
         val result = chain.proceed()
         var replaced: Any? = null
         try {
-            if (uid != null && spoofingForCaller(uid)) {
+            if (uid != null && coverQueryOn() && spoofingForCaller(uid)) {
                 val cursor = result as? Cursor
                 if (cursor != null) {
                     val uri = chain.args.firstOrNull { it is Uri } as? Uri
@@ -353,6 +353,8 @@ class DuckUSBModule : XposedModule() {
         } catch (_: Throwable) {}
         replaced ?: result
     }
+
+    private fun coverQueryOn() = prefs.getBoolean(Config.KEY_COVER_QUERY, true)
 
     /** Shared gate for both framework paths: real apps only, never the OS, never our own UI. */
     private fun spoofingForCaller(uid: Int): Boolean {
