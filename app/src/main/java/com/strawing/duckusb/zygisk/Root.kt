@@ -78,6 +78,18 @@ object Root {
         return result.isSuccess
     }
 
+    fun globalSetting(key: String): String? {
+        val result = exec("settings get global $key")
+        if (!result.isSuccess) return null
+        return result.out.firstOrNull()?.trim()?.takeIf { it.isNotEmpty() && it != "null" }
+    }
+
+    fun property(key: String): String? {
+        val result = exec("getprop $key")
+        if (!result.isSuccess) return null
+        return result.out.firstOrNull()?.trim()?.takeIf { it.isNotEmpty() }
+    }
+
     fun listedPackages(): Set<String> {
         val result = exec("ls -1 ${Config.PACKAGES_DIR} 2>/dev/null")
         if (!result.isSuccess) return emptySet()

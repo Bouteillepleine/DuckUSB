@@ -84,7 +84,7 @@ class MainActivity : AppCompatActivity() {
         root.removeAllViews()
         root.addView(header())
         root.addView(statusCard())
-        root.addView(sectionLabel("What this phone really says"))
+        root.addView(sectionLabel("What this app sees vs the device"))
         root.addView(readingsCard())
         root.addView(sectionLabel("Behaviour"))
         root.addView(controlsCard())
@@ -201,13 +201,15 @@ class MainActivity : AppCompatActivity() {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(16), dp(14), dp(16), dp(14))
         }
-        for (key in Config.SPOOF_KEYS) col.addView(readingRow(key, globalSetting(key)))
+        for (key in Config.SPOOF_KEYS) {
+            col.addView(readingRow(key, globalSetting(key), if (rootAvailable) Root.globalSetting(key) else null))
+        }
         col.addView(thinDivider())
         for (key in listOf("sys.usb.state", "sys.usb.config", "init.svc.adbd")) {
-            col.addView(readingRow(key, systemProperty(key)))
+            col.addView(readingRow(key, systemProperty(key), if (rootAvailable) Root.property(key) else null))
         }
         col.addView(TextView(this).apply {
-            text = "DuckUSB never spoofs itself, so this is the real device state. Open a covered app to see the settings read differently. Properties are never spoofed in framework mode."
+            text = "Left chip is what this app reads, right chip is what root reads. DuckUSB never spoofs itself, so a mismatch here means something else on this device is spoofing this app."
             setTextColor(cOnSurfaceVar)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
             setPadding(0, dp(10), 0, 0)
@@ -365,7 +367,7 @@ class MainActivity : AppCompatActivity() {
         return row
     }
 
-    private fun readingRow(key: String, value: String): View =
+    private fun readingRow(key: String, seen: String, truth: String?): View =
         LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
@@ -377,18 +379,27 @@ class MainActivity : AppCompatActivity() {
                 typeface = Typeface.MONOSPACE
                 layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
             })
-            addView(chip(value))
+            val differs = truth != null && truth != seen
+            addView(chip(seen, differs))
+            if (truth != null) {
+                addView(TextView(this@MainActivity).apply {
+                    text = if (differs) " ≠ " else " = "
+                    setTextColor(cOnSurfaceVar)
+                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
+                })
+                addView(chip(truth, false))
+            }
         }
 
-    private fun chip(text: String): TextView = TextView(this).apply {
+    private fun chip(text: String, highlight: Boolean = false): TextView = TextView(this).apply {
         this.text = text
-        setTextColor(cOnSurfaceVar)
+        setTextColor(if (highlight) cOnErrorCont else cOnSurfaceVar)
         setTextSize(TypedValue.COMPLEX_UNIT_SP, 12.5f)
         typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
         setPadding(dp(10), dp(4), dp(10), dp(4))
         background = GradientDrawable().apply {
             cornerRadius = dp(9).toFloat()
-            setColor(attr(MR.attr.colorSurfaceContainerHighest, cSurfaceCard))
+            setColor(if (highlight) cErrorCont else attr(MR.attr.colorSurfaceContainerHighest, cSurfaceCard))
         }
     }
 
