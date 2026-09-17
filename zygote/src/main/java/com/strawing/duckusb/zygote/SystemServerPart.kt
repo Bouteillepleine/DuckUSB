@@ -1,7 +1,10 @@
 package com.strawing.duckusb.zygote
 
 import android.app.Notification
+import android.app.NotificationManager
+import android.content.Context
 import android.content.res.Resources
+import android.os.UserHandle
 import com.strawing.duckusb.common.Config
 import com.strawing.duckusb.zygote.hook.Frame
 import com.strawing.duckusb.zygote.hook.XHook
@@ -61,6 +64,33 @@ object SystemServerPart {
             if (XHook.hook(m, ::onEnqueue)) count++
         }
         Logx.i("notification suppressor armed: $count methods, titles=$adbTitles")
+        if (count > 0) cancelAlreadyPosted()
+    }
+
+    private fun cancelAlreadyPosted() {
+        val context = FrameworkPart.context ?: run {
+            Logx.e("no context, cannot clear the notification posted during boot")
+            return
+        }
+        val manager = runCatching {
+            context.getSystemService(NotificationManager::class.java)
+        }.getOrNull() ?: return
+        val res = Resources.getSystem()
+        for (name in arrayOf("adb_active_notification_title", "adb_wifi_active_notification_title")) {
+            val id = res.getIdentifier(name, "string", "android")
+            if (id == 0) continue
+            val cleared = runCatching {
+                val cancelAsUser = NotificationManager::class.java.getMethod(
+                    "cancelAsUser", String::class.java, Int::class.javaPrimitiveType, UserHandle::class.java
+                )
+                val all = UserHandle::class.java.getDeclaredField("ALL").get(null)
+                cancelAsUser.invoke(manager, null, id, all)
+                true
+            }.getOrElse {
+                runCatching { manager.cancel(id); true }.getOrDefault(false)
+            }
+            Logx.i("cleared notification $name (id=$id): $cleared")
+        }
     }
 
     private fun waitForBootCompleted(): Boolean {

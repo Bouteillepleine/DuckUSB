@@ -21,7 +21,8 @@ object FrameworkPart {
     private const val SETTINGS_PROVIDER = "com.android.providers.settings.SettingsProvider"
 
     @Volatile
-    private var context: Context? = null
+    var context: Context? = null
+        private set
 
     @Volatile
     var service: DuckService? = null
