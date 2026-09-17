@@ -1,10 +1,7 @@
 package com.strawing.duckusb.zygote
 
 import android.app.Notification
-import android.app.NotificationManager
-import android.content.Context
 import android.content.res.Resources
-import android.os.UserHandle
 import com.strawing.duckusb.common.Config
 import com.strawing.duckusb.zygote.hook.Frame
 import com.strawing.duckusb.zygote.hook.XHook
@@ -63,34 +60,76 @@ object SystemServerPart {
             if (m.returnType != Void.TYPE) continue
             if (XHook.hook(m, ::onEnqueue)) count++
         }
-        Logx.i("notification suppressor armed: $count methods, titles=$adbTitles")
+        Logx.i("notification suppressor armed: $count methods, strings=$adbStrings")
         if (count > 0) cancelAlreadyPosted()
     }
 
     private fun cancelAlreadyPosted() {
-        val context = FrameworkPart.context ?: run {
-            Logx.e("no context, cannot clear the notification posted during boot")
+        val binder = runCatching {
+            Class.forName("android.os.ServiceManager")
+                .getDeclaredMethod("getService", String::class.java)
+                .apply { isAccessible = true }
+                .invoke(null, "notification")
+        }.getOrNull() ?: run {
+            Logx.e("no notification service, cannot clear what was posted during boot")
             return
         }
-        val manager = runCatching {
-            context.getSystemService(NotificationManager::class.java)
+        val service = runCatching {
+            Class.forName("android.app.INotificationManager\$Stub")
+                .getDeclaredMethod("asInterface", Class.forName("android.os.IBinder"))
+                .invoke(null, binder)
         }.getOrNull() ?: return
-        val res = Resources.getSystem()
-        for (name in arrayOf("adb_active_notification_title", "adb_wifi_active_notification_title")) {
-            val id = res.getIdentifier(name, "string", "android")
-            if (id == 0) continue
-            val cleared = runCatching {
-                val cancelAsUser = NotificationManager::class.java.getMethod(
-                    "cancelAsUser", String::class.java, Int::class.javaPrimitiveType, UserHandle::class.java
-                )
-                val all = UserHandle::class.java.getDeclaredField("ALL").get(null)
-                cancelAsUser.invoke(manager, null, id, all)
-                true
-            }.getOrElse {
-                runCatching { manager.cancel(id); true }.getOrDefault(false)
-            }
-            Logx.i("cleared notification $name (id=$id): $cleared")
+
+        val active = activeNotifications(service) ?: run {
+            Logx.e("could not list active notifications")
+            return
         }
+        var cleared = 0
+        for (sbn in active) {
+            if (sbn == null) continue
+            val notification = runCatching {
+                sbn.javaClass.getMethod("getNotification").invoke(sbn) as? Notification
+            }.getOrNull() ?: continue
+            if (!isAdbNotification(notification)) continue
+            val pkg = runCatching { sbn.javaClass.getMethod("getPackageName").invoke(sbn) as? String }.getOrNull() ?: continue
+            val tag = runCatching { sbn.javaClass.getMethod("getTag").invoke(sbn) as? String }.getOrNull()
+            val id = runCatching { sbn.javaClass.getMethod("getId").invoke(sbn) as? Int }.getOrNull() ?: continue
+            val userId = runCatching { sbn.javaClass.getMethod("getUserId").invoke(sbn) as? Int }.getOrNull() ?: 0
+            if (cancelOne(service, pkg, tag, id, userId)) {
+                cleared++
+                Logx.i("cleared the adb notification already posted by $pkg (id=$id)")
+            }
+        }
+        if (cleared == 0) Logx.i("no adb notification was posted before arming")
+    }
+
+    private fun activeNotifications(service: Any): Array<*>? {
+        for (m in service.javaClass.methods) {
+            if (!m.name.startsWith("getActiveNotifications")) continue
+            val args: Array<Any?> = when (m.parameterTypes.size) {
+                1 -> arrayOf("android")
+                2 -> arrayOf("android", null)
+                else -> continue
+            }
+            val result = runCatching { m.invoke(service, *args) }.getOrNull()
+            if (result is Array<*>) return result
+        }
+        return null
+    }
+
+    private fun cancelOne(service: Any, pkg: String, tag: String?, id: Int, userId: Int): Boolean {
+        for (m in service.javaClass.methods) {
+            if (m.name != "cancelNotificationWithTag") continue
+            val types = m.parameterTypes
+            val args: Array<Any?> = when (types.size) {
+                5 -> arrayOf(pkg, pkg, tag, id, userId)
+                4 -> arrayOf(pkg, tag, id, userId)
+                6 -> arrayOf(pkg, pkg, null, tag, id, userId)
+                else -> continue
+            }
+            if (runCatching { m.invoke(service, *args) }.isSuccess) return true
+        }
+        return false
     }
 
     private fun waitForBootCompleted(): Boolean {
@@ -149,20 +188,27 @@ object SystemServerPart {
         } catch (_: Throwable) {
         }
         try {
-            val title = n.extras?.getCharSequence(Notification.EXTRA_TITLE)?.toString()
-            if (title != null && title in adbTitles) return true
+            val extras = n.extras ?: return false
+            for (key in arrayOf(Notification.EXTRA_TITLE, Notification.EXTRA_TITLE_BIG, Notification.EXTRA_TEXT)) {
+                val value = extras.getCharSequence(key)?.toString()?.trim() ?: continue
+                if (value.isEmpty()) continue
+                if (value in adbStrings) return true
+            }
         } catch (_: Throwable) {
         }
         return false
     }
 
-    private val adbTitles: Set<String> by lazy {
+    private val adbStrings: Set<String> by lazy {
         val res = Resources.getSystem()
-        arrayOf("adb_active_notification_title", "adb_wifi_active_notification_title")
-            .mapNotNull { name ->
-                val id = res.getIdentifier(name, "string", "android")
-                if (id != 0) runCatching { res.getString(id) }.getOrNull() else null
-            }
-            .toSet()
+        arrayOf(
+            "adb_active_notification_title",
+            "adb_active_notification_message",
+            "adb_wifi_active_notification_title",
+            "adb_wifi_active_notification_message",
+        ).mapNotNull { name ->
+            val id = res.getIdentifier(name, "string", "android")
+            if (id != 0) runCatching { res.getString(id).trim() }.getOrNull() else null
+        }.filter { it.isNotEmpty() }.toSet()
     }
 }
