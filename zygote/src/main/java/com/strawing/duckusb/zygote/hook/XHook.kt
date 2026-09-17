@@ -69,6 +69,8 @@ object XHook {
 
     fun hook(target: Executable, body: (Frame) -> Unit): Boolean {
         return try {
+            runCatching { Hooks.deoptimize(target) }
+                .onFailure { Logx.e("pre-hook deoptimize failed on ${target.name}", it) }
             Hooks.hook(
                 target,
                 Hooks.EntryPointType.CURRENT,

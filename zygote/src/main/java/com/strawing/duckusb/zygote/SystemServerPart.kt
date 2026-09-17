@@ -33,6 +33,9 @@ object SystemServerPart {
     private var settingsHooked = false
 
     @Volatile
+    private var settingsProvider: Any? = null
+
+    @Volatile
     private var callHookSeen = false
 
     @Volatile
@@ -74,7 +77,7 @@ object SystemServerPart {
                         provider?.javaClass?.name == SETTINGS_PROVIDER
                 if (isSettings && provider != null) {
                     ensureService(provider as? ContentProvider, f.arg(0) as? Context)
-                    hookSettingsProvider(provider.javaClass)
+                    hookSettingsProvider(provider.javaClass, provider)
                 }
             } catch (t: Throwable) {
                 Logx.e("attachInfo hook failed", t)
@@ -83,9 +86,10 @@ object SystemServerPart {
         Logx.i("armed: waiting for the settings provider")
     }
 
-    private fun hookSettingsProvider(clazz: Class<*>) {
+    private fun hookSettingsProvider(clazz: Class<*>, instance: Any?) {
         if (settingsHooked) return
         settingsHooked = true
+        settingsProvider = instance
         var count = 0
         for (m in clazz.declaredMethods) {
             val hooked = when {
@@ -103,11 +107,38 @@ object SystemServerPart {
         service?.hookCount = count
         service?.installedAtRealtimeMs = SystemClock.elapsedRealtime()
         Logx.i("settings provider hooked: $count methods on ${clazz.name}")
-        selfTest(clazz)
+        hookGenericDispatch()
+        selfTest(clazz, instance)
     }
 
-    private fun selfTest(clazz: Class<*>) {
-        val provider = runCatching { localProvider(Config.SETTINGS_AUTHORITY) }.getOrNull() ?: return
+    private fun hookGenericDispatch() {
+        val cp = XHook.findClass("android.content.ContentProvider") ?: return
+        var count = 0
+        count += XHook.hookAll(cp, "call", 3, ::onGenericCall)
+        count += XHook.hookAll(cp, "query", 3, ::onGenericQuery)
+        Logx.i("generic provider dispatch hooked: $count methods")
+    }
+
+    private fun onGenericCall(f: Frame) {
+        val target = settingsProvider
+        if (target == null || f.thisObject !== target) {
+            f.proceed()
+            return
+        }
+        onProviderCall(f)
+    }
+
+    private fun onGenericQuery(f: Frame) {
+        val target = settingsProvider
+        if (target == null || f.thisObject !== target) {
+            f.proceed()
+            return
+        }
+        onProviderQuery(f)
+    }
+
+    private fun selfTest(clazz: Class<*>, instance: Any?) {
+        val provider = instance ?: runCatching { localProvider(Config.SETTINGS_AUTHORITY) }.getOrNull() ?: return
         runCatching {
             val method = clazz.getDeclaredMethod(
                 "call", String::class.java, String::class.java, Bundle::class.java
@@ -312,7 +343,7 @@ object SystemServerPart {
             if (provider != null) {
                 runCatching {
                     ensureService(provider as? ContentProvider)
-                    hookSettingsProvider(provider.javaClass)
+                    hookSettingsProvider(provider.javaClass, provider)
                 }.onFailure { Logx.e("late settings provider hook failed", it) }
                 return
             }
