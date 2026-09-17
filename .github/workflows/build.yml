@@ -1,0 +1,37 @@
+name: build
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - uses: android-actions/setup-android@v3
+
+      - name: Install the NDK
+        run: sdkmanager --install "ndk;27.2.12479018" "cmake;3.22.1" "platforms;android-37"
+
+      - name: Drop the local JDK pin
+        run: sed -i '/org.gradle.java.home/d' gradle.properties
+
+      - name: Build
+        run: ./gradlew :zygote:assembleRelease :app:assembleRelease
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: DuckUSB-Zygisk
+          path: |
+            zygote/build/outputs/magisk/release/*.zip
+            app/build/outputs/apk/release/*.apk
