@@ -39,9 +39,20 @@ so nothing is loaded into processes you did not pick.
 
 ### system_server
 
-The notification suppressor is the only thing that would run in `system_server`, and it is
-**opt-in and off by default** (`hookSystemServer` in `config.json`). It bootlooped the test device
-once, so it stays off until it is proven. Two guards exist for when you do turn it on:
+Two features run there, both behind `hookSystemServer` (opt-in, off by default) and both armed
+only **after `sys.boot_completed`** plus an 8 s settle, so a bad hook can never block a boot:
+
+* **`frameworkMode`** — the settings spoof done in `system_server` on the settings provider's own
+  `call` and `query`. Verified: a target app that is **not** in `packages/`, and therefore never
+  injected, still reads `0` on all four paths. That is the stealthier layer — zero module
+  footprint inside the app being fooled.
+* **`hideNotif`** — swallows the "USB debugging enabled" notification at
+  `NotificationManagerService.enqueueNotificationInternal`, matching by channel (`DEVELOPER`,
+  `DEVELOPER_IMPORTANT`) and by the ROM's own localized titles. Verified by posting a notification
+  titled "Débogage USB activé": swallowed, while an ordinary notification passed through and
+  SystemUI's USB notification was untouched.
+
+Two guards for when they are on:
 
 * `service.sh` watches for `sys.boot_completed`; if it has not arrived within 150 s it writes
   `disable_hooks` and reboots, which survives a zygote crash loop (`post-fs-data.sh`'s boot
@@ -88,5 +99,6 @@ NDK 29.0.14206865. Outputs land in `zygote/build/outputs/magisk/release/` and
 * `getprop` is a separate process, so a detector comparing an in-process property read against
   `getprop` output still sees a difference. That is why `persist.sys.usb.config` is left truthful:
   a spoof that only half-matches is louder than no spoof.
-* The notification suppressor is unproven. See above.
+* The notification suppressor is proven against a notification carrying the ROM's own ADB title,
+  not against a live USB replug — the match path is identical, but the replug case is untested.
 * Zygisk itself remains detectable. This removes the LSPosed surface, not the Zygisk one.
