@@ -78,6 +78,7 @@ object Config {
      * when development_settings_enabled reads 0, so spoofing it hides a feature the user needs.
      */
     val SPARE_PACKAGES: Set<String> = setOf(
+        "com.strawing.duckusb.zygisk",
         "com.android.mtp",
         "com.android.externalstorage",
         "com.android.storagemanager",

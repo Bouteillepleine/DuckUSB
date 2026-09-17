@@ -36,6 +36,7 @@ object Config {
     )
 
     val SPARE_PACKAGES: Set<String> = setOf(
+        "com.strawing.duckusb",
         "com.android.mtp",
         "com.android.externalstorage",
         "com.android.storagemanager",
