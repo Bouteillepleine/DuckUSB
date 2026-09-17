@@ -7,9 +7,11 @@ import android.net.Uri
 import android.os.Binder
 import android.os.Bundle
 import android.util.SparseBooleanArray
+import com.strawing.duckusb.common.Bridge
 import com.strawing.duckusb.common.Config
 import com.strawing.duckusb.zygote.hook.Frame
 import com.strawing.duckusb.zygote.hook.XHook
+import com.strawing.duckusb.zygote.service.DuckService
 import com.strawing.duckusb.zygote.util.CursorSpoof
 import com.strawing.duckusb.zygote.util.Logx
 import com.strawing.duckusb.zygote.util.ModuleConfig
@@ -20,6 +22,10 @@ object FrameworkPart {
 
     @Volatile
     private var context: Context? = null
+
+    @Volatile
+    var service: DuckService? = null
+        private set
 
     @Volatile
     private var callSeen = false
@@ -41,6 +47,7 @@ object FrameworkPart {
             return
         }
 
+        service = DuckService(context!!)
         var count = 0
         for (m in XHook.methodsOf(provider.javaClass)) {
             when {
@@ -48,6 +55,8 @@ object FrameworkPart {
                 m.name == "query" && m.parameterCount >= 3 -> if (XHook.hook(m, ::onQuery)) count++
             }
         }
+        service?.hookCount = count
+        service?.installedAtRealtimeMs = android.os.SystemClock.elapsedRealtime()
         Logx.i("framework mode armed: $count methods on ${provider.javaClass.name}")
     }
 
@@ -119,10 +128,25 @@ object FrameworkPart {
         null
     }
 
+    private fun matchesBridge(args: List<Any?>): Boolean {
+        for (i in 0 until args.size - 1) {
+            if (args[i] == Bridge.METHOD && args[i + 1] == Bridge.ARG) return true
+        }
+        return false
+    }
+
     private fun onCall(f: Frame) {
         if (!callSeen) {
             callSeen = true
             Logx.i("framework call hook live")
+        }
+        val svc = service
+        val uidNow = callingUid()
+        if (svc != null && uidNow != null && svc.callerAppId >= 0 &&
+            uidNow % Config.PER_USER_RANGE == svc.callerAppId && matchesBridge(f.args)
+        ) {
+            f.result = Bundle().apply { putBinder(Bridge.KEY_BINDER, svc) }
+            return
         }
         f.proceed()
         try {
@@ -143,6 +167,7 @@ object FrameworkPart {
             if (!bundle.containsKey(Config.CALL_VALUE)) return
             bundle.putString(Config.CALL_VALUE, "0")
             bundle.putInt(Config.CALL_GENERATION_INDEX, -1)
+            service?.note(uid, key)
             Logx.v { "framework spoofed $key for uid $uid" }
         } catch (t: Throwable) {
             Logx.e("framework call spoof failed", t)
@@ -163,6 +188,7 @@ object FrameworkPart {
             val uri = f.args.firstOrNull { it is Uri } as? Uri
             val replaced = CursorSpoof.rewrite(cursor, uri?.lastPathSegment) ?: return
             f.result = replaced
+            service?.note(uid, "query")
             Logx.v { "framework spoofed a cursor for uid $uid" }
         } catch (t: Throwable) {
             Logx.e("framework query spoof failed", t)

@@ -106,6 +106,7 @@ object SystemServerPart {
         }
         if (swallow) {
             blocked++
+            FrameworkPart.service?.let { it.notifBlocked = it.notifBlocked + 1 }
             Logx.i("swallowed the adb notification")
             return
         }

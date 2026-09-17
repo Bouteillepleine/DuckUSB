@@ -19,6 +19,7 @@ import androidx.core.view.WindowInsetsCompat
 import com.google.android.material.card.MaterialCardView
 import com.google.android.material.color.MaterialColors
 import com.google.android.material.materialswitch.MaterialSwitch
+import com.strawing.duckusb.common.Bridge
 import com.strawing.duckusb.common.Config
 import com.strawing.duckusb.common.DuckConfig
 import com.google.android.material.R as MR
@@ -31,6 +32,9 @@ class MainActivity : AppCompatActivity() {
     private var moduleInstalled = false
     private var hooksKilled = false
     private var live = false
+    private var serviceState: Bundle? = null
+    private var records: List<Bundle> = emptyList()
+    private var recordsOpen = false
 
     private val cOnSurface get() = attr(MR.attr.colorOnSurface)
     private val cOnSurfaceVar get() = attr(MR.attr.colorOnSurfaceVariant)
@@ -77,6 +81,8 @@ class MainActivity : AppCompatActivity() {
         hooksKilled = moduleInstalled && Root.hooksKilled()
         config = (if (moduleInstalled) Root.readConfig() else null) ?: config
         live = runCatching { System.getProperty(Config.LIVE_PROPERTY) != null }.getOrDefault(false)
+        serviceState = ServiceClient.state(this)
+        records = ServiceClient.records(this).sortedByDescending { it.getInt(Bridge.REC_COUNT) }
         render()
     }
 
@@ -84,6 +90,8 @@ class MainActivity : AppCompatActivity() {
         root.removeAllViews()
         root.addView(header())
         root.addView(statusCard())
+        root.addView(sectionLabel("Diagnostics"))
+        root.addView(diagnosticsCard())
         root.addView(sectionLabel("What this app sees vs the device"))
         root.addView(readingsCard())
         root.addView(sectionLabel("Behaviour"))
@@ -110,8 +118,8 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun statusCard(): View {
-        val spoofing = live && !config.paused && config.spoofSettings &&
-            config.frameworkMode && config.hookSystemServer
+        val hookLive = serviceState != null
+        val spoofing = hookLive && !config.paused && config.spoofSettings
         val healthy = rootAvailable && moduleInstalled && !hooksKilled && spoofing
 
         val title = when {
@@ -119,24 +127,22 @@ class MainActivity : AppCompatActivity() {
             !moduleInstalled -> "Module not installed"
             hooksKilled -> "Hooks disabled"
             config.paused -> "Paused"
-            !live -> "Waiting for a reboot"
             !config.hookSystemServer || !config.frameworkMode -> "Framework mode is off"
+            !serviceLive() -> "Reboot needed"
             !config.spoofSettings -> "Settings spoof is off"
-            config.frameworkAllApps -> "Active — every app"
-            config.targets.isEmpty() -> "Active — but no app is covered"
-            else -> "Active — ${config.targets.size} app(s)"
+            else -> "Active — framework mode"
         }
         val detail = when {
             !rootAvailable -> "Grant root in your root manager so the app can read and write the module configuration."
             !moduleInstalled -> "Flash the module zip, then reboot."
             hooksKilled -> "The kill switch or the boot watchdog disabled every hook. Turn it back on below, then reboot."
             config.paused -> "Everything reads true again. The hooks stay loaded until reboot."
-            !live -> "The module is installed but has not been injected here yet. Reboot."
             !config.hookSystemServer || !config.frameworkMode -> "Nothing is spoofing. Turn framework mode on below, then reboot."
-            !config.spoofSettings -> "Framework mode is running but the settings spoof is switched off."
-            config.frameworkAllApps -> "Told in system_server for every app. Nothing is injected into them, so their memory holds nothing to find."
-            config.targets.isEmpty() -> "Framework mode is running, but no app is selected. Pick some under Coverage."
-            else -> "Told in system_server for the apps you picked. Nothing is injected into them."
+            !serviceLive() -> "Framework mode is on but its hook is not live in system_server. Nothing is spoofing until you reboot."
+            !config.spoofSettings -> "The hook is live but the settings spoof is switched off."
+            config.frameworkAllApps -> "Hook live in system_server, covering every app"
+            config.targets.isEmpty() -> "Hook live, but no app is selected. Pick some under Coverage."
+            else -> "Hook live in system_server, covering ${config.targets.size} app(s)"
         }
 
         val bg = if (healthy) cPrimaryCont else cErrorCont
@@ -194,6 +200,130 @@ class MainActivity : AppCompatActivity() {
         card.addView(row)
         return card
     }
+
+
+    private fun serviceLive(): Boolean = serviceState != null
+
+    private fun diagnosticsCard(): View {
+        val card = outlinedCard()
+        card.setOnClickListener { reload() }
+        val col = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(16), dp(14), dp(16), dp(14))
+        }
+        val st = serviceState
+        if (st == null) {
+            col.addView(TextView(this).apply {
+                text = "The system_server service is not answering. Either framework mode is off, or the module has not been through a reboot yet."
+                setTextColor(cOnSurfaceVar)
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
+            })
+            card.addView(col)
+            return card
+        }
+
+        col.addView(statRow("service version", st.getInt(Bridge.STATE_VERSION).toString()))
+        col.addView(statRow("provider hooks", st.getInt(Bridge.STATE_HOOKS).toString()))
+        col.addView(statRow("armed", "${(st.getLong(Bridge.STATE_INSTALLED_AT) / 1000)}s into this boot"))
+        col.addView(statRow("apps spoofed", records.size.toString()))
+        col.addView(statRow("notifications swallowed", st.getInt(Bridge.STATE_NOTIF_BLOCKED).toString()))
+
+        col.addView(thinDivider())
+        col.addView(TextView(this).apply {
+            text = (if (recordsOpen) "▾" else "▸") + "  Callers lied to since boot (${records.size})"
+            setTextColor(cOnSurface)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 13.5f)
+            setPadding(0, dp(8), 0, dp(4))
+            isClickable = true
+            setOnClickListener {
+                recordsOpen = !recordsOpen
+                render()
+            }
+        })
+        if (recordsOpen) {
+            if (records.isEmpty()) {
+                col.addView(TextView(this).apply {
+                    text = "Nothing yet. An app has to read one of the keys first."
+                    setTextColor(cOnSurfaceVar)
+                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 12.5f)
+                })
+            }
+            for (record in records) {
+                val uid = record.getInt(Bridge.REC_UID)
+                val count = record.getInt(Bridge.REC_COUNT)
+                val keys = record.getStringArrayList(Bridge.REC_KEYS).orEmpty()
+                col.addView(callerRow(labelForUid(uid), "${count}× ${shortKeys(keys)}"))
+            }
+            if (records.isNotEmpty()) {
+                col.addView(TextView(this).apply {
+                    text = "Clear"
+                    setTextColor(cPrimary)
+                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
+                    setTypeface(typeface, Typeface.BOLD)
+                    setPadding(0, dp(10), 0, 0)
+                    isClickable = true
+                    setOnClickListener {
+                        ServiceClient.clearRecords(this@MainActivity)
+                        reload()
+                    }
+                })
+            }
+        }
+        card.addView(col)
+        return card
+    }
+
+    private fun shortKeys(keys: List<String>): String = keys.joinToString(", ") {
+        when (it) {
+            "development_settings_enabled" -> "dev"
+            "adb_wifi_enabled" -> "adb_wifi"
+            "adb_enabled" -> "adb"
+            else -> it
+        }
+    }
+
+    private fun labelForUid(uid: Int): String {
+        val packages = runCatching { packageManager.getPackagesForUid(uid) }.getOrNull()
+        val pkg = packages?.firstOrNull() ?: return "uid $uid"
+        return runCatching {
+            packageManager.getApplicationLabel(packageManager.getApplicationInfo(pkg, 0)).toString()
+        }.getOrDefault(pkg)
+    }
+
+    private fun statRow(label: String, value: String): View =
+        LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(0, dp(6), 0, dp(6))
+            addView(TextView(this@MainActivity).apply {
+                text = label
+                setTextColor(cOnSurface)
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 13.5f)
+                typeface = Typeface.MONOSPACE
+                layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+            })
+            addView(chip(value))
+        }
+
+    private fun callerRow(name: String, value: String): View =
+        LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(0, dp(5), 0, dp(5))
+            addView(TextView(this@MainActivity).apply {
+                text = name
+                setTextColor(cOnSurface)
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
+                maxLines = 1
+                ellipsize = android.text.TextUtils.TruncateAt.END
+                layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+            })
+            addView(chip(value).apply {
+                maxLines = 2
+                ellipsize = android.text.TextUtils.TruncateAt.END
+                maxWidth = dp(200)
+            })
+        }
 
     private fun readingsCard(): View {
         val card = outlinedCard()
@@ -325,6 +455,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun save() {
         if (moduleInstalled) Root.writeConfig(config)
+        ServiceClient.push(this, config)
     }
 
     private fun toggleRow(
