@@ -29,7 +29,6 @@ target_include_directories(xz PUBLIC ${XZ_DIR}/userspace ${XZ_DIR}/linux/include
 target_compile_options(xz PRIVATE -Wno-everything)
 
 add_library(duckusb SHARED
-        native_hooks.cpp
         lsplant_glue.cpp
         elf_img.cpp)
 

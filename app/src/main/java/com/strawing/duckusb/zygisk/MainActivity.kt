@@ -3,6 +3,7 @@ package com.strawing.duckusb.zygisk
 import android.content.Intent
 import android.graphics.Color
 import android.graphics.Typeface
+import android.graphics.drawable.GradientDrawable
 import android.os.Bundle
 import android.provider.Settings
 import android.util.TypedValue
@@ -16,6 +17,7 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import com.google.android.material.card.MaterialCardView
+import com.google.android.material.color.MaterialColors
 import com.google.android.material.materialswitch.MaterialSwitch
 import com.strawing.duckusb.common.Config
 import com.strawing.duckusb.common.DuckConfig
@@ -29,19 +31,19 @@ class MainActivity : AppCompatActivity() {
     private var moduleInstalled = false
     private var hooksKilled = false
     private var live = false
-    private var injected: Set<String> = emptySet()
 
-    private val cPrimary get() = attr(MR.attr.colorPrimary)
     private val cOnSurface get() = attr(MR.attr.colorOnSurface)
     private val cOnSurfaceVar get() = attr(MR.attr.colorOnSurfaceVariant)
     private val cSurfaceCard get() = attr(MR.attr.colorSurfaceContainer, attr(MR.attr.colorSurface))
     private val cOutline get() = attr(MR.attr.colorOutlineVariant)
+    private val cPrimary get() = attr(MR.attr.colorPrimary)
     private val cPrimaryCont get() = attr(MR.attr.colorPrimaryContainer)
+    private val cOnPrimaryCont get() = attr(MR.attr.colorOnPrimaryContainer)
     private val cErrorCont get() = attr(MR.attr.colorErrorContainer)
+    private val cOnErrorCont get() = attr(MR.attr.colorOnErrorContainer)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-
         root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(16), dp(8), dp(16), dp(24))
@@ -75,11 +77,6 @@ class MainActivity : AppCompatActivity() {
         hooksKilled = moduleInstalled && Root.hooksKilled()
         config = (if (moduleInstalled) Root.readConfig() else null) ?: config
         live = runCatching { System.getProperty(Config.LIVE_PROPERTY) != null }.getOrDefault(false)
-        injected = if (moduleInstalled) {
-            Root.listedPackages() - setOf(Config.SYSTEM_SERVER_PACKAGE, Config.PKG, Config.ALL_PACKAGES)
-        } else {
-            emptySet()
-        }
         render()
     }
 
@@ -87,9 +84,12 @@ class MainActivity : AppCompatActivity() {
         root.removeAllViews()
         root.addView(header())
         root.addView(statusCard())
-        root.addView(scopeCard())
-        root.addView(controlsCard())
+        root.addView(sectionLabel("What this phone really says"))
         root.addView(readingsCard())
+        root.addView(sectionLabel("Behaviour"))
+        root.addView(controlsCard())
+        root.addView(sectionLabel("Coverage"))
+        root.addView(scopeCard())
         root.addView(footer())
     }
 
@@ -110,189 +110,211 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun statusCard(): View {
-        val card = filledCard(if (live) cPrimaryCont else cErrorCont, dp(16))
-        val box = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        val spoofing = live && !config.paused && config.spoofSettings &&
+            config.frameworkMode && config.hookSystemServer
+        val healthy = rootAvailable && moduleInstalled && !hooksKilled && spoofing
 
-        box.addView(TextView(this).apply {
-            text = when {
-                live && !rootAvailable -> "Active, but no root access"
-                live -> "Active"
-                !rootAvailable -> "No root access"
-                !moduleInstalled -> "Module not installed"
-                hooksKilled -> "Hooks disabled (safe mode)"
-                else -> "Installed, waiting for a reboot"
-            }
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 18f)
-            setTypeface(typeface, Typeface.BOLD)
-            setTextColor(cOnSurface)
-        })
-
-        val detail = when {
-            live && !rootAvailable -> "The hooks are running. Grant root in your root manager so this app can read and write the module configuration."
-            !rootAvailable -> "Grant root to the app so it can read and write the module configuration."
-            !moduleInstalled -> "Flash DuckUSB-Zygisk.zip in your root manager, then reboot."
-            hooksKilled -> "The boot guard or the kill switch disabled the hooks. Turn them back on below."
-            live && config.frameworkAllApps -> "Every app reads USB debugging as off, spoofed from system_server with nothing injected into them."
-            live -> "The module is running. The apps you scoped read USB debugging as off."
-            else -> "The module is installed but was not injected here. Reboot, or check that Zygisk is enabled."
+        val title = when {
+            !rootAvailable -> "No root access"
+            !moduleInstalled -> "Module not installed"
+            hooksKilled -> "Hooks disabled"
+            config.paused -> "Paused"
+            !live -> "Waiting for a reboot"
+            !config.hookSystemServer || !config.frameworkMode -> "Framework mode is off"
+            !config.spoofSettings -> "Settings spoof is off"
+            config.frameworkAllApps -> "Active — every app"
+            config.targets.isEmpty() -> "Active — but no app is covered"
+            else -> "Active — ${config.targets.size} app(s)"
         }
-        box.addView(TextView(this).apply {
-            text = detail
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
-            setTextColor(cOnSurfaceVar)
-            setPadding(0, dp(6), 0, 0)
-        })
+        val detail = when {
+            !rootAvailable -> "Grant root in your root manager so the app can read and write the module configuration."
+            !moduleInstalled -> "Flash the module zip, then reboot."
+            hooksKilled -> "The kill switch or the boot watchdog disabled every hook. Turn it back on below, then reboot."
+            config.paused -> "Everything reads true again. The hooks stay loaded until reboot."
+            !live -> "The module is installed but has not been injected here yet. Reboot."
+            !config.hookSystemServer || !config.frameworkMode -> "Nothing is spoofing. Turn framework mode on below, then reboot."
+            !config.spoofSettings -> "Framework mode is running but the settings spoof is switched off."
+            config.frameworkAllApps -> "Told in system_server for every app. Nothing is injected into them, so their memory holds nothing to find."
+            config.targets.isEmpty() -> "Framework mode is running, but no app is selected. Pick some under Coverage."
+            else -> "Told in system_server for the apps you picked. Nothing is injected into them."
+        }
 
-        card.addView(box)
+        val bg = if (healthy) cPrimaryCont else cErrorCont
+        val fg = if (healthy) cOnPrimaryCont else cOnErrorCont
+        val card = filledCard(bg, dp(22))
+        val row = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+        row.addView(TextView(this).apply {
+            text = if (config.paused) "⏸️" else if (healthy) "✅" else "⛔"
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 24f)
+            setPadding(0, 0, dp(14), 0)
+        })
+        row.addView(LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+            addView(TextView(this@MainActivity).apply {
+                text = title
+                setTextColor(fg)
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 17f)
+                typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+            })
+            addView(TextView(this@MainActivity).apply {
+                text = detail
+                setTextColor(fg)
+                alpha = 0.9f
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 12.5f)
+                setPadding(0, dp(2), 0, 0)
+            })
+        })
+        row.addView(LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER_HORIZONTAL
+            setPadding(dp(10), 0, 0, 0)
+            addView(MaterialSwitch(this@MainActivity).apply {
+                isChecked = config.paused
+                isEnabled = moduleInstalled
+                contentDescription = "Pause all spoofing"
+                setOnCheckedChangeListener { _, checked ->
+                    config.paused = checked
+                    save()
+                    reload()
+                }
+            })
+            addView(TextView(this@MainActivity).apply {
+                text = "Pause"
+                setTextColor(fg)
+                alpha = 0.75f
+                gravity = Gravity.CENTER
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f)
+                setPadding(0, dp(2), 0, 0)
+            })
+        })
+        card.addView(row)
         return card
     }
 
-    private fun scopeCard(): View {
+    private fun readingsCard(): View {
         val card = outlinedCard()
-        val box = LinearLayout(this).apply {
+        val col = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(16), dp(16), dp(16), dp(16))
+            setPadding(dp(16), dp(14), dp(16), dp(14))
         }
-        box.addView(sectionLabel(if (config.frameworkAllApps) "Property spoofing" else "Scope"))
-        box.addView(TextView(this).apply {
-            text = when {
-                config.frameworkAllApps && injected.isEmpty() ->
-                    "Every app already reads USB debugging as off, with nothing injected into any of them. Tick an app below only if you also want sys.usb.* spoofed inside it — that injects, and a memory scan can see it."
-                config.frameworkAllApps ->
-                    "Every app already reads USB debugging as off. ${injected.size} app(s) are also injected for sys.usb.* spoofing, which a memory scan can see."
-                config.targets.isEmpty() ->
-                    "No app is being lied to yet. Pick the detectors you want to fool."
-                else ->
-                    "${config.targets.size} app(s) selected. Only these see USB debugging as off."
-            }
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
+        for (key in Config.SPOOF_KEYS) col.addView(readingRow(key, globalSetting(key)))
+        col.addView(thinDivider())
+        for (key in listOf("sys.usb.state", "sys.usb.config", "init.svc.adbd")) {
+            col.addView(readingRow(key, systemProperty(key)))
+        }
+        col.addView(TextView(this).apply {
+            text = "DuckUSB never spoofs itself, so this is the real device state. Open a covered app to see the settings read differently. Properties are never spoofed in framework mode."
             setTextColor(cOnSurfaceVar)
-            setPadding(0, dp(4), 0, dp(12))
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
+            setPadding(0, dp(10), 0, 0)
         })
-        box.addView(TextView(this).apply {
-            text = "Choose apps"
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f)
-            setTypeface(typeface, Typeface.BOLD)
-            setTextColor(cPrimary)
-            isClickable = true
-            setOnClickListener {
-                startActivity(Intent(this@MainActivity, ScopeActivity::class.java))
-            }
-        })
-        card.addView(box)
+        card.addView(col)
         return card
     }
 
     private fun controlsCard(): View {
         val card = outlinedCard()
-        val box = LinearLayout(this).apply {
+        val col = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(16), dp(16), dp(16), dp(8))
+            setPadding(dp(16), dp(6), dp(16), dp(6))
         }
-        box.addView(sectionLabel("Behaviour"))
-        box.addView(
-            toggleRow("Pause everything", "Keeps the module loaded but stops every lie.", config.paused) {
-                config.paused = it
-                save()
-            }
-        )
-        box.addView(thinDivider())
-        box.addView(
-            toggleRow("Spoof settings", "adb_enabled, adb_wifi_enabled and development_settings_enabled read 0.", config.spoofSettings) {
-                config.spoofSettings = it
-                save()
-            }
-        )
-        box.addView(thinDivider())
-        box.addView(
-            toggleRow(
-                "Framework mode",
-                "Spoofs from system_server instead of inside apps. Nothing is injected into the app being fooled.",
-                config.frameworkMode,
-            ) {
+        col.addView(
+            toggleRow("🧩", "Framework mode", "The lie is told in system_server. Nothing is injected into the apps being fooled. Needs a reboot.", config.frameworkMode) {
                 config.frameworkMode = it
                 config.hookSystemServer = it || config.hideNotif
                 save()
                 reload()
             }
         )
-        box.addView(thinDivider())
-        box.addView(
-            toggleRow(
-                "Cover every app",
-                "Framework mode lies to every app, with no scope list. Shell, system uids and file-transfer apps still see the truth.",
-                config.frameworkAllApps,
-            ) {
+        col.addView(thinDivider())
+        col.addView(
+            toggleRow("🌍", "Cover every app", "No scope list at all. Shell, system uids and the file-transfer apps still read the truth.", config.frameworkAllApps) {
                 config.frameworkAllApps = it
                 save()
                 reload()
             }
         )
-        box.addView(thinDivider())
-        box.addView(
-            toggleRow("Cover the query path", "Also rewrites bulk cursor reads of the settings tables, not just the getters.", config.coverQueryPath) {
+        col.addView(thinDivider())
+        col.addView(
+            toggleRow("🔌", "Spoof USB debugging", "adb_enabled · adb_wifi_enabled · Developer Options → 0", config.spoofSettings) {
+                config.spoofSettings = it
+                save()
+                reload()
+            }
+        )
+        col.addView(thinDivider())
+        col.addView(
+            toggleRow("🔎", "Cover the query path", "Also rewrites cursor reads of the settings tables, so a direct query agrees with the getter.", config.coverQueryPath) {
                 config.coverQueryPath = it
                 save()
             }
         )
-        box.addView(thinDivider())
-        box.addView(
-            toggleRow("Spoof properties", "sys.usb.* and init.svc.adbd, inside the scoped apps only. Needs an app restart.", config.spoofProps) {
-                config.spoofProps = it
-                save()
-            }
-        )
-        box.addView(thinDivider())
-        box.addView(
-            toggleRow("Hide the notification", "Swallows the persistent USB debugging notification. Runs in system_server, armed after boot.", config.hideNotif) {
+        col.addView(thinDivider())
+        col.addView(
+            toggleRow("🔕", "Hide the notification", "Swallows the persistent USB debugging notification. Needs a reboot.", config.hideNotif) {
                 config.hideNotif = it
                 config.hookSystemServer = it || config.frameworkMode
                 save()
+                reload()
             }
         )
-        box.addView(thinDivider())
-        box.addView(
-            toggleRow("Verbose log", "One logcat line per spoofed read. Off unless you are investigating.", config.verboseLog) {
+        col.addView(thinDivider())
+        col.addView(
+            toggleRow("📝", "Verbose log", "One logcat line per spoofed read. Off unless you are investigating.", config.verboseLog) {
                 config.verboseLog = it
                 save()
             }
         )
-        box.addView(thinDivider())
-        box.addView(
-            toggleRow("Kill switch", "Disables every hook on the next boot without uninstalling.", hooksKilled) {
+        col.addView(thinDivider())
+        col.addView(
+            toggleRow("🛑", "Kill switch", "Disables every hook on the next boot without uninstalling.", hooksKilled) {
                 hooksKilled = it
                 Root.setHooksKilled(it)
+                reload()
             }
         )
-        card.addView(box)
+        card.addView(col)
         return card
     }
 
-    private fun readingsCard(): View {
+    private fun scopeCard(): View {
         val card = outlinedCard()
-        val box = LinearLayout(this).apply {
+        val col = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(16), dp(16), dp(16), dp(16))
         }
-        box.addView(sectionLabel("What this app reads"))
-        box.addView(TextView(this).apply {
-            text = "DuckUSB is never spoofed to itself, so these are the real values."
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
+        col.addView(TextView(this).apply {
+            text = when {
+                config.frameworkAllApps -> "Every app on the device reads USB debugging as off. No list to maintain."
+                config.targets.isEmpty() -> "No app is covered yet. Pick the detectors you want to fool, or turn on \"Cover every app\"."
+                else -> "${config.targets.size} app(s) covered. The rest of the device reads the truth."
+            }
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
             setTextColor(cOnSurfaceVar)
-            setPadding(0, dp(2), 0, dp(8))
         })
-        for (key in Config.SPOOF_KEYS) {
-            box.addView(readingRow(key, globalSetting(key)))
+        if (!config.frameworkAllApps) {
+            col.addView(TextView(this).apply {
+                text = "Choose apps"
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f)
+                setTypeface(typeface, Typeface.BOLD)
+                setTextColor(cPrimary)
+                isClickable = true
+                setPadding(0, dp(12), 0, 0)
+                setOnClickListener {
+                    startActivity(Intent(this@MainActivity, ScopeActivity::class.java))
+                }
+            })
         }
-        for ((key, _) in Config.PROP_OVERRIDES) {
-            box.addView(readingRow(key, systemProperty(key)))
-        }
-        card.addView(box)
+        card.addView(col)
         return card
     }
 
     private fun footer(): View = TextView(this).apply {
-        text = "Module id ${Config.MODULE_ID} · app scope applies on app restart, framework and notification changes on reboot"
+        text = "Module id ${Config.MODULE_ID} · framework and notification changes apply on reboot"
         setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f)
         setTextColor(cOnSurfaceVar)
         gravity = Gravity.CENTER
@@ -304,6 +326,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun toggleRow(
+        icon: String,
         title: String,
         subtitle: String,
         checked: Boolean,
@@ -314,6 +337,11 @@ class MainActivity : AppCompatActivity() {
             gravity = Gravity.CENTER_VERTICAL
             setPadding(0, dp(12), 0, dp(12))
         }
+        row.addView(TextView(this).apply {
+            text = icon
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 18f)
+            setPadding(0, 0, dp(12), 0)
+        })
         val text = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
@@ -340,20 +368,29 @@ class MainActivity : AppCompatActivity() {
     private fun readingRow(key: String, value: String): View =
         LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
-            setPadding(0, dp(4), 0, dp(4))
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(0, dp(6), 0, dp(6))
             addView(TextView(this@MainActivity).apply {
                 text = key
-                setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
-                setTextColor(cOnSurfaceVar)
+                setTextColor(cOnSurface)
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 13.5f)
+                typeface = Typeface.MONOSPACE
                 layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
             })
-            addView(TextView(this@MainActivity).apply {
-                text = value
-                setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
-                setTypeface(Typeface.MONOSPACE)
-                setTextColor(cOnSurface)
-            })
+            addView(chip(value))
         }
+
+    private fun chip(text: String): TextView = TextView(this).apply {
+        this.text = text
+        setTextColor(cOnSurfaceVar)
+        setTextSize(TypedValue.COMPLEX_UNIT_SP, 12.5f)
+        typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+        setPadding(dp(10), dp(4), dp(10), dp(4))
+        background = GradientDrawable().apply {
+            cornerRadius = dp(9).toFloat()
+            setColor(attr(MR.attr.colorSurfaceContainerHighest, cSurfaceCard))
+        }
+    }
 
     private fun globalSetting(key: String): String = try {
         Settings.Global.getString(contentResolver, key) ?: "—"
@@ -375,6 +412,7 @@ class MainActivity : AppCompatActivity() {
         setTypeface(typeface, Typeface.BOLD)
         setTextColor(cPrimary)
         letterSpacing = 0.08f
+        setPadding(dp(4), dp(10), dp(4), dp(6))
     }
 
     private fun filledCard(background: Int, padding: Int) = MaterialCardView(this).apply {
@@ -402,13 +440,12 @@ class MainActivity : AppCompatActivity() {
 
     private fun thinDivider(): View = View(this).apply {
         layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(1))
+            .apply { topMargin = dp(4); bottomMargin = dp(4) }
         setBackgroundColor(cOutline)
     }
 
-    private fun attr(attrId: Int, fallback: Int = Color.GRAY): Int {
-        val value = TypedValue()
-        return if (theme.resolveAttribute(attrId, value, true)) value.data else fallback
-    }
+    private fun attr(attrId: Int, fallback: Int = Color.GRAY): Int =
+        MaterialColors.getColor(this, attrId, fallback)
 
     private fun appVersion(): String = try {
         packageManager.getPackageInfo(packageName, 0).versionName ?: "?"

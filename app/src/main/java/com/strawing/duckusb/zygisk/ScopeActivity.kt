@@ -48,9 +48,9 @@ class ScopeActivity : AppCompatActivity() {
 
         container.addView(TextView(this).apply {
             text = if (config.frameworkAllApps) {
-                "Every app is already covered by framework mode. Ticking an app here injects into it to spoof sys.usb.*, which a memory scan can see."
+                "\"Cover every app\" is on, so this list is ignored — every app already reads USB debugging as off."
             } else {
-                "Ticked apps read USB debugging as off."
+                "Ticked apps read USB debugging as off. Nothing is injected into them; the lie is told in system_server."
             }
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
             setTextColor(attr(MR.attr.colorOnSurfaceVariant))
@@ -126,7 +126,7 @@ class ScopeActivity : AppCompatActivity() {
 
     private fun save() {
         config.targets = LinkedHashSet(selected)
-        val wrote = Root.writeConfig(config) && Root.syncPackages(selected)
+        val wrote = Root.writeConfig(config) && Root.syncPackages()
         if (!wrote) {
             Toast.makeText(this, "Could not write the module configuration", Toast.LENGTH_SHORT).show()
         }

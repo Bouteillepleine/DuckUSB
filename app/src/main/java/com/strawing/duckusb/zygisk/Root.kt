@@ -60,12 +60,8 @@ object Root {
         return result.isSuccess
     }
 
-    fun syncPackages(targets: Set<String>): Boolean {
-        val keep = LinkedHashSet<String>().apply {
-            add(Config.SYSTEM_SERVER_PACKAGE)
-            add(Config.PKG)
-            addAll(targets)
-        }
+    fun syncPackages(): Boolean {
+        val keep = linkedSetOf(Config.SYSTEM_SERVER_PACKAGE, Config.PKG)
         val commands = ArrayList<String>()
         commands += "mkdir -p ${Config.PACKAGES_DIR}"
         commands += "find ${Config.PACKAGES_DIR} -mindepth 1 -maxdepth 1 -delete"

@@ -18,7 +18,7 @@ object ZygoteEntry {
                 NativeLib.load(moduleDir)
                 return
             }
-            AppPart.preSpecialize(pkg, moduleDir)
+            AppPart.preSpecialize(pkg)
         } catch (t: Throwable) {
             Logx.e("premain failed", t)
         }
@@ -29,7 +29,7 @@ object ZygoteEntry {
         try {
             val pkg = ZygoteLoader.getPackageName()
             Logx.v { "injected into $pkg (${ZygoteLoader.getProcessName()})" }
-            if (pkg == Config.SYSTEM_SERVER_PACKAGE) SystemServerPart.init() else AppPart.postSpecialize()
+            if (pkg == Config.SYSTEM_SERVER_PACKAGE) SystemServerPart.init()
         } catch (t: Throwable) {
             Logx.e("main failed", t)
         }
