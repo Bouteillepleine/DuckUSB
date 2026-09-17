@@ -90,6 +90,16 @@ object Root {
         return result.out.firstOrNull()?.trim()?.takeIf { it.isNotEmpty() }
     }
 
+    fun moduleVersion(): String? {
+        val result = exec("grep -m1 '^version=' ${Config.MODULE_DIR}/module.prop 2>/dev/null")
+        if (!result.isSuccess) return null
+        return result.out.firstOrNull()?.trim()?.removePrefix("version=")?.trim()?.takeIf { it.isNotEmpty() }
+    }
+
+    fun refreshDescription() {
+        exec("sh ${Config.MODULE_DIR}/describe.sh")
+    }
+
     fun zygiskFlavor(): String {
         for (dir in ZYGISK_MODULES) {
             val result = exec("grep -m1 '^name=' $dir/module.prop 2>/dev/null")

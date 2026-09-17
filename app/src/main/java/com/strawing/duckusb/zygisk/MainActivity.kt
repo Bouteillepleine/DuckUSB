@@ -33,6 +33,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var root: LinearLayout
     private lateinit var headerHolder: LinearLayout
     private lateinit var nav: BottomNavigationView
+    private lateinit var headerDivider: View
     private var config = DuckConfig()
     private var rootAvailable = false
     private var moduleInstalled = false
@@ -42,6 +43,7 @@ class MainActivity : AppCompatActivity() {
     private var records: List<Bundle> = emptyList()
     private var recordsOpen = false
     private var zygiskFlavor = "unknown"
+    private var moduleVersion: String? = null
     private var tab = R.id.tab_status
 
     private val cOnSurface get() = attr(MR.attr.colorOnSurface)
@@ -77,6 +79,14 @@ class MainActivity : AppCompatActivity() {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(16), 0, dp(16), 0)
         }
+        headerDivider = View(this).apply {
+            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(1))
+            setBackgroundColor(cOutline)
+            alpha = 0f
+        }
+        scroll.setOnScrollChangeListener { _, _, scrollY, _, _ ->
+            headerDivider.alpha = if (scrollY > dp(4)) 1f else 0f
+        }
         nav = BottomNavigationView(this).apply {
             inflateMenu(R.menu.bottom_nav)
             selectedItemId = tab
@@ -84,12 +94,14 @@ class MainActivity : AppCompatActivity() {
                 tab = item.itemId
                 renderContent()
                 scroll.scrollTo(0, 0)
+                headerDivider.alpha = 0f
                 true
             }
         }
         val shell = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             addView(headerHolder)
+            addView(headerDivider)
             addView(scroll)
             addView(nav)
         }
@@ -115,6 +127,7 @@ class MainActivity : AppCompatActivity() {
         serviceState = ServiceClient.state(this)
         records = ServiceClient.records(this).sortedByDescending { it.getInt(Bridge.REC_COUNT) }
         zygiskFlavor = if (rootAvailable) Root.zygiskFlavor() else "unknown"
+        moduleVersion = if (moduleInstalled) Root.moduleVersion() else null
         render()
     }
 
@@ -194,7 +207,8 @@ class MainActivity : AppCompatActivity() {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(16), dp(10), dp(16), dp(10))
         }
-        col.addView(infoRow("Module version", appVersion()))
+        col.addView(infoRow("Module version", moduleVersion ?: "not installed"))
+        col.addView(infoRow("Manager version", appVersion()))
         col.addView(infoRow("Hook engine", "LSPlant + Dobby"))
         col.addView(infoRow("Zygisk", zygiskFlavor))
         col.addView(infoRow("Injected here", if (live) "yes" else "no"))
@@ -260,10 +274,18 @@ class MainActivity : AppCompatActivity() {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
         }
-        row.addView(TextView(this).apply {
-            text = if (config.paused) "⏸️" else if (healthy) "✅" else "⛔"
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 24f)
-            setPadding(0, 0, dp(14), 0)
+        row.addView(ImageView(this).apply {
+            setImageResource(
+                when {
+                    config.paused -> R.drawable.ic_paused
+                    healthy -> R.drawable.ic_status
+                    else -> R.drawable.ic_alert
+                }
+            )
+            setColorFilter(fg)
+            layoutParams = LinearLayout.LayoutParams(dp(30), dp(30)).apply {
+                rightMargin = dp(16)
+            }
         })
         row.addView(LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -570,7 +592,10 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun save() {
-        if (moduleInstalled) Root.writeConfig(config)
+        if (moduleInstalled) {
+            Root.writeConfig(config)
+            Root.refreshDescription()
+        }
         ServiceClient.push(this, config)
     }
 

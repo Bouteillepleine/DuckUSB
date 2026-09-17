@@ -22,6 +22,8 @@ sleep 30
 rm -f "$MODDIR/boot_attempts"
 log -t DuckUSB "boot completed, attempt counter cleared"
 
+sh "$MODDIR/describe.sh" 2>/dev/null
+
 find_resetprop() {
     for candidate in /data/adb/ksu/bin/resetprop /data/adb/ap/bin/resetprop /data/adb/magisk/resetprop; do
         [ -x "$candidate" ] && echo "$candidate" && return 0
