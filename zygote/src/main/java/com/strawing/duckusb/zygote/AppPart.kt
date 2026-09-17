@@ -6,7 +6,7 @@ import com.strawing.duckusb.zygote.util.ModuleConfig
 
 object AppPart {
 
-    fun preSpecialize(packageName: String?) {
+    fun preSpecialize(packageName: String?, moduleDir: String?) {
         if (packageName == null) return
         if (packageName == Config.PKG) return
         if (packageName in Config.SKIP_SPOOF_PROCESSES) return
@@ -19,7 +19,7 @@ object AppPart {
             return
         }
 
-        val ok = NativeProps.install(Config.PROP_OVERRIDES)
+        val ok = NativeProps.install(moduleDir, Config.PROP_OVERRIDES)
         Logx.v { "property spoof for $packageName installed=$ok" }
     }
 }

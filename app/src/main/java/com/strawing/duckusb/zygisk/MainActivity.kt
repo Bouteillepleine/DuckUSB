@@ -112,10 +112,11 @@ class MainActivity : AppCompatActivity() {
 
         box.addView(TextView(this).apply {
             text = when {
+                live && !rootAvailable -> "Active, but no root access"
+                live -> "Active in system_server"
                 !rootAvailable -> "No root access"
                 !moduleInstalled -> "Module not installed"
                 hooksKilled -> "Hooks disabled (safe mode)"
-                live -> "Active in system_server"
                 else -> "Installed, waiting for a reboot"
             }
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 18f)
@@ -124,6 +125,7 @@ class MainActivity : AppCompatActivity() {
         })
 
         val detail = when {
+            live && !rootAvailable -> "The hooks are running. Grant root in your root manager so this app can read and write the module configuration."
             !rootAvailable -> "Grant root to the app so it can read and write the module configuration."
             !moduleInstalled -> "Flash DuckUSB-Zygisk.zip in your root manager, then reboot."
             hooksKilled -> "The boot guard or the kill switch disabled the hooks. Turn them back on below."

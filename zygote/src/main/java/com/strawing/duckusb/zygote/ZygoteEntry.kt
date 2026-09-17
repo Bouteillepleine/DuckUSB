@@ -10,10 +10,11 @@ object ZygoteEntry {
     @JvmStatic
     fun premain() {
         try {
-            ModuleConfig.load(ZygoteLoader.getModuleDir())
+            val moduleDir = ZygoteLoader.getModuleDir()
+            ModuleConfig.load(moduleDir)
             val pkg = ZygoteLoader.getPackageName()
             if (pkg == Config.SYSTEM_SERVER_PACKAGE) return
-            AppPart.preSpecialize(pkg)
+            AppPart.preSpecialize(pkg, moduleDir)
         } catch (t: Throwable) {
             Logx.e("premain failed", t)
         }

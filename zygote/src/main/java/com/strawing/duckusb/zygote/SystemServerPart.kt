@@ -58,6 +58,7 @@ object SystemServerPart {
             try {
                 val provider = f.thisObject
                 val info = f.arg(1) as? ProviderInfo
+                Logx.v { "provider attach: ${info?.authority} ${provider?.javaClass?.name}" }
                 val isSettings =
                     info?.authority?.split(";")?.any { it.trim() == Config.SETTINGS_AUTHORITY } == true ||
                         provider?.javaClass?.name == SETTINGS_PROVIDER
