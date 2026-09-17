@@ -1,19 +1,25 @@
+enableFeaturePreview("TYPESAFE_PROJECT_ACCESSORS")
+
 pluginManagement {
     repositories {
         gradlePluginPortal()
         google()
         mavenCentral()
+        maven("https://jitpack.io")
     }
 }
+
 dependencyResolutionManagement {
     repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
     repositories {
         google()
         mavenCentral()
-        // Xposed API (compileOnly)
-        maven { url = uri("https://api.xposed.info/") }
-        maven { url = uri("https://jitpack.io") }
+        maven("https://api.xposed.info/")
+        maven("https://jitpack.io")
     }
 }
+
 rootProject.name = "DuckUSB"
+
 include(":app")
+include(":zygisk:common", ":zygisk:zygote", ":zygisk:app", ":zygisk:probe")

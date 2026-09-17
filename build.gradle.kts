@@ -1,7 +1,13 @@
 plugins {
-    id("com.android.application") version "8.13.2" apply false
-    id("org.jetbrains.kotlin.android") version "2.3.0" apply false
+    alias(libs.plugins.agp.app) apply false
+    alias(libs.plugins.agp.lib) apply false
+    alias(libs.plugins.kotlin) apply false
 }
+
+val appPackageName by extra("com.strawing.duckusb")
+val moduleId by extra("duckusb_zygisk")
+val moduleVersionName by extra("2.0.0")
+val moduleVersionCode by extra(20)
 
 tasks.register("clean", Delete::class) {
     delete(rootProject.layout.buildDirectory)

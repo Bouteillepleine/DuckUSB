@@ -77,7 +77,7 @@ zygisk {
 }
 
 dependencies {
-    implementation(projects.common)
+    implementation(projects.zygisk.common)
     implementation(libs.androidx.annotation.jvm)
     implementation(libs.r8.annotations)
 }

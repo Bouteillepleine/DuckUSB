@@ -1,0 +1,24 @@
+[versions]
+agp = "8.13.2"
+kotlin = "2.3.0"
+zygoteloader = "bf5078e182"
+r8-annotations = "v1.0.1"
+libxposed-api = "101.0.1"
+libxposed-service = "101.0.0"
+libsu = "6.0.0"
+
+[plugins]
+agp-app = { id = "com.android.application", version.ref = "agp" }
+agp-lib = { id = "com.android.library", version.ref = "agp" }
+kotlin = { id = "org.jetbrains.kotlin.android", version.ref = "kotlin" }
+zygoteloader = { id = "com.github.aerath-stuff.ZygoteLoader", version.ref = "zygoteloader" }
+
+[libraries]
+androidx-core-ktx = { module = "androidx.core:core-ktx", version = "1.13.1" }
+androidx-appcompat = { module = "androidx.appcompat:appcompat", version = "1.7.0" }
+androidx-annotation-jvm = { module = "androidx.annotation:annotation-jvm", version = "1.10.0" }
+material = { module = "com.google.android.material:material", version = "1.12.0" }
+r8-annotations = { module = "io.github.vova7878:R8Annotations", version.ref = "r8-annotations" }
+libxposed-api = { module = "io.github.libxposed:api", version.ref = "libxposed-api" }
+libxposed-service = { module = "io.github.libxposed:service", version.ref = "libxposed-service" }
+libsu-core = { module = "com.github.topjohnwu.libsu:core", version.ref = "libsu" }
