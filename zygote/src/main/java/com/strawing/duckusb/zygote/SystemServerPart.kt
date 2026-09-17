@@ -22,6 +22,10 @@ object SystemServerPart {
             Logx.i("kill switch present, no hooks installed")
             return
         }
+        if (!ModuleConfig.config.hookSystemServer) {
+            Logx.i("system_server hooks are opt-in and disabled, nothing to install")
+            return
+        }
         if (!ModuleConfig.config.hideNotif) {
             Logx.i("notification suppressor off, nothing to install")
             return
@@ -34,7 +38,10 @@ object SystemServerPart {
         val nm = XHook.findClass("android.app.NotificationManager") ?: return
         var count = 0
         for (name in arrayOf("notify", "notifyAsUser")) {
-            count += XHook.hookAll(nm, name, 0, ::onNotify)
+            for (m in XHook.methodsOf(nm)) {
+                if (m.name != name || m.returnType != Void.TYPE) continue
+                if (XHook.hook(m, ::onNotify)) count++
+            }
         }
         Logx.i("notification wrapper hooked: $count methods")
     }
@@ -49,7 +56,11 @@ object SystemServerPart {
             Logx.e("NotificationManagerService not found")
             return
         }
-        val count = XHook.hookAll(nms, "enqueueNotificationInternal", 0, ::onNotify)
+        var count = 0
+        for (m in XHook.methodsOf(nms)) {
+            if (m.name != "enqueueNotificationInternal" || m.returnType != Void.TYPE) continue
+            if (XHook.hook(m, ::onNotify)) count++
+        }
         Logx.i("notification service hooked: $count methods")
     }
 

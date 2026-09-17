@@ -34,7 +34,7 @@ class Frame(
         get() = (0 until argCount).map { arg(it) }
 
     fun proceed(): Any? {
-        val backup = hooker.backup ?: return null
+        val backup = hooker.backup ?: throw IllegalStateException("no backup for ${member.name}")
         val params = if (static) raw else raw.copyOfRange(1, raw.size)
         result = backup.invoke(thisObject, *params)
         proceeded = true
@@ -55,6 +55,11 @@ class Hooker(private val member: Executable, private val body: (Frame) -> Unit) 
         } catch (t: Throwable) {
             Logx.e("hook body failed on ${member.name}", t)
             if (!frame.proceeded) return frame.proceed()
+        }
+        val type = frame.returnType
+        if (!frame.proceeded && frame.result == null && type != Void.TYPE && type.isPrimitive) {
+            Logx.e("hook on ${member.name} returned null for ${type.name}, falling through")
+            return frame.proceed()
         }
         return frame.result
     }
