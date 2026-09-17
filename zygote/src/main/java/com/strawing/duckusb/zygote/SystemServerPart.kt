@@ -1,6 +1,7 @@
 package com.strawing.duckusb.zygote
 
 import android.app.Notification
+import android.content.ContentProvider
 import android.content.Context
 import android.content.pm.ProviderInfo
 import android.database.Cursor
@@ -28,6 +29,12 @@ object SystemServerPart {
         private set
 
     private var settingsHooked = false
+
+    @Volatile
+    private var callHookSeen = false
+
+    @Volatile
+    private var queryHookSeen = false
 
     private val spoofValues: Map<String, String> =
         Config.SPOOF_KEYS.associateWith { "0" }
@@ -64,9 +71,7 @@ object SystemServerPart {
                     info?.authority?.split(";")?.any { it.trim() == Config.SETTINGS_AUTHORITY } == true ||
                         provider?.javaClass?.name == SETTINGS_PROVIDER
                 if (isSettings && provider != null) {
-                    (f.arg(0) as? Context)?.let { ctx ->
-                        if (service == null) service = DuckService(ctx)
-                    }
+                    ensureService(provider as? ContentProvider, f.arg(0) as? Context)
                     hookSettingsProvider(provider.javaClass)
                 }
             } catch (t: Throwable) {
@@ -98,6 +103,10 @@ object SystemServerPart {
     }
 
     private fun onProviderCall(f: Frame) {
+        if (!callHookSeen) {
+            callHookSeen = true
+            Logx.i("call hook live (service=${service != null})")
+        }
         val uid = callingUid()
         val args = f.args
         val svc = service
@@ -148,6 +157,10 @@ object SystemServerPart {
     }
 
     private fun onProviderQuery(f: Frame) {
+        if (!queryHookSeen) {
+            queryHookSeen = true
+            Logx.i("query hook live (service=${service != null})")
+        }
         f.proceed()
         try {
             val svc = service ?: return
@@ -226,15 +239,27 @@ object SystemServerPart {
         Logx.i("notification service hooked: $count methods")
     }
 
+    private fun ensureService(provider: ContentProvider?, fallback: Context? = null) {
+        if (service != null) return
+        val context = fallback
+            ?: runCatching { provider?.context }.getOrNull()
+            ?: systemContext()
+        if (context == null) {
+            Logx.e("no context available, the service cannot start")
+            return
+        }
+        val created = DuckService(context)
+        service = created
+        Logx.i("service ready: manager appId=${created.callerAppId} targets=${created.config.targets.size}")
+    }
+
     private fun pollForSettingsProvider() {
         repeat(240) {
             if (settingsHooked) return
             val provider = runCatching { localProvider(Config.SETTINGS_AUTHORITY) }.getOrNull()
             if (provider != null) {
                 runCatching {
-                    if (service == null) {
-                        systemContext()?.let { service = DuckService(it) }
-                    }
+                    ensureService(provider as? ContentProvider)
                     hookSettingsProvider(provider.javaClass)
                 }.onFailure { Logx.e("late settings provider hook failed", it) }
                 return
@@ -261,9 +286,24 @@ object SystemServerPart {
         val at = currentActivityThread() ?: return null
         val field = at.javaClass.getDeclaredField("mLocalProvidersByName").apply { isAccessible = true }
         val map = field.get(at) as? Map<*, *> ?: return null
-        val record = map[authority] ?: return null
-        val providerField = record.javaClass.getDeclaredField("mLocalProvider").apply { isAccessible = true }
-        return providerField.get(record)
+        for (record in map.values) {
+            if (record == null) continue
+            val local = runCatching {
+                record.javaClass.getDeclaredField("mLocalProvider")
+                    .apply { isAccessible = true }
+                    .get(record)
+            }.getOrNull() ?: continue
+            val names = runCatching {
+                record.javaClass.getDeclaredField("mNames")
+                    .apply { isAccessible = true }
+                    .get(record) as? Array<*>
+            }.getOrNull()
+            Logx.v { "local provider: ${names?.joinToString(",")} ${local.javaClass.name}" }
+            if (names?.any { it == authority } == true || local.javaClass.name == SETTINGS_PROVIDER) {
+                return local
+            }
+        }
+        return null
     }
 
     private fun systemServerClassLoader(): ClassLoader? = try {
