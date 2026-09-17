@@ -43,9 +43,10 @@ Two features run there, both behind `hookSystemServer` (opt-in, off by default) 
 only **after `sys.boot_completed`** plus an 8 s settle, so a bad hook can never block a boot:
 
 * **`frameworkMode`** — the settings spoof done in `system_server` on the settings provider's own
-  `call` and `query`. Verified: a target app that is **not** in `packages/`, and therefore never
-  injected, still reads `0` on all four paths. That is the stealthier layer — zero module
-  footprint inside the app being fooled.
+  `call` and `query`. Verified: an app that is **not** in `packages/`, and therefore never
+  injected, still reads `0` on all four paths. With **`frameworkAllApps`** it covers every app
+  without any scope list; the shell, every uid below 10000, the manager and the spare packages
+  (MTP and friends) always get the truth.
 * **`hideNotif`** — swallows the "USB debugging enabled" notification at
   `NotificationManagerService.enqueueNotificationInternal`, matching by channel (`DEVELOPER`,
   `DEVELOPER_IMPORTANT`) and by the ROM's own localized titles. Verified by posting a notification
@@ -93,6 +94,20 @@ git submodule update --init --recursive
 Needs CMake 3.31.6 (`sdkmanager "cmake;3.31.6"`, LSPlant wants ≥ 3.28 and C++23 modules) and
 NDK 29.0.14206865. Outputs land in `zygote/build/outputs/magisk/release/` and
 `app/build/outputs/apk/`.
+
+## Two ways to run it
+
+| | settings spoof | property spoof | footprint in the target app |
+|---|---|---|---|
+| framework mode, nothing in `packages/` | all four read paths | none | **nothing loaded at all** |
+| app in `packages/` (injected) | all four read paths | `sys.usb.*`, `init.svc.adbd` | libart + libc dirty exec pages, and `libduckusb.so` visible by path |
+
+Duck Detector 2026.09.14 on this device reports the second row plainly — *"Namespace bypass: the
+current process loaded restricted-path libraries through the linker namespace:
+/data/adb/modules/duckusb_zygisk/lib/arm64-v8a/libduckusb.so"* plus seven high-risk memory
+signals from the inline hooks. The first row gives it nothing to find. Property spoofing is
+in-process by nature, so it cannot be had without that footprint: scope an app only when you want
+properties spoofed there and accept the trade.
 
 ## Known limits
 
