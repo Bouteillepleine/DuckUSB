@@ -104,6 +104,11 @@ class DuckUi(private val activity: Activity) {
             gravity = Gravity.CENTER_VERTICAL
             setPadding(dp(4), dp(14), dp(4), dp(10))
             addView(TextView(activity).apply {
+                text = DUCK
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 27f)
+                setPadding(0, 0, dp(10), 0)
+            })
+            addView(TextView(activity).apply {
                 text = title
                 setTextSize(TypedValue.COMPLEX_UNIT_SP, 30f)
                 setTypeface(typeface, Typeface.BOLD)
@@ -445,6 +450,8 @@ class DuckUi(private val activity: Activity) {
     }
 
     companion object {
+        private const val DUCK = "🦆"
+
         val TAB_STATUS = R.id.tab_status
         val TAB_BEHAVIOUR = R.id.tab_behaviour
         val TAB_DIAGNOSTICS = R.id.tab_diagnostics

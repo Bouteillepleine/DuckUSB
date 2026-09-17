@@ -7,6 +7,7 @@ import android.os.Bundle
 import android.provider.Settings
 import android.view.View
 import android.widget.LinearLayout
+import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import com.google.android.material.color.DynamicColors
 import com.strawing.duckusb.service.DuckServiceClient
@@ -19,6 +20,7 @@ class MainActivity : AppCompatActivity() {
 
     private companion object {
         const val PREF_RECORDS_EXPANDED = "svc_records_expanded"
+        const val STATE_TAB = "tab"
         val PROP_KEYS =
             listOf("persist.sys.usb.config", "sys.usb.state", "sys.usb.config", "init.svc.adbd")
         val SETTING_KEYS =
@@ -46,11 +48,17 @@ class MainActivity : AppCompatActivity() {
         Theming.restore(this)
 
         prefs = resolvePrefs()
+        savedInstanceState?.getInt(STATE_TAB, 0)?.takeIf { it != 0 }?.let { tab = it }
         recordsOpen = prefs.getBoolean(PREF_RECORDS_EXPANDED, false)
 
         ui = DuckUi(this)
         setContentView(ui.scaffold(onTabSelected = { tab = it; renderContent() }, startTab = tab))
         render()
+    }
+
+    override fun onSaveInstanceState(outState: Bundle) {
+        super.onSaveInstanceState(outState)
+        outState.putInt(STATE_TAB, tab)
     }
 
     override fun onResume() {
@@ -216,17 +224,27 @@ class MainActivity : AppCompatActivity() {
         col.addView(ui.toggleRow(
             DuckUi.Icons.tag, "Mask the USB config property",
             "persist.sys.usb.config reads mtp instead of adb, in the property area itself so every read route agrees. Needs root.",
-            propMaskInstalled, rootAvailable,
+            propMaskInstalled,
         ) { wanted ->
             propMaskInstalled = wanted
             setFlag(Config.KEY_MASK_USB_PROP, wanted)
             renderContent()
             background {
-                if (wanted) RootTools.setPropMask(true) else {
+                val ok = if (wanted) RootTools.setPropMask(true) else {
                     RootTools.setPropMask(false)
                     RootTools.restoreProp()
                 }
-                runOnUiThread { reload() }
+                runOnUiThread {
+                    if (!ok) {
+                        propMaskInstalled = !wanted
+                        Toast.makeText(
+                            this@MainActivity,
+                            "Needs root — grant DuckUSB superuser access, then try again.",
+                            Toast.LENGTH_LONG,
+                        ).show()
+                    }
+                    reload()
+                }
             }
         })
         col.addView(ui.thinDivider())

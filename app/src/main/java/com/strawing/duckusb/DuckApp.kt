@@ -1,6 +1,7 @@
 package com.strawing.duckusb
 
 import android.app.Application
+import com.strawing.duckusb.ui.Theming
 import io.github.libxposed.service.XposedService
 import io.github.libxposed.service.XposedServiceHelper
 import java.util.concurrent.CopyOnWriteArraySet
@@ -40,7 +41,9 @@ class DuckApp : Application(), XposedServiceHelper.OnServiceListener {
 
     override fun onCreate() {
         super.onCreate()
+        Theming.restore(this)
         XposedServiceHelper.registerListener(this)
+        Thread { runCatching { RootTools.warm() } }.apply { isDaemon = true }.start()
     }
 
     override fun onServiceBind(service: XposedService) {

@@ -61,6 +61,7 @@ class MainActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        savedInstanceState?.getInt("tab", 0)?.takeIf { it != 0 }?.let { tab = it }
         root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(16), 0, dp(16), dp(24))
@@ -114,6 +115,11 @@ class MainActivity : AppCompatActivity() {
             v.setPadding(0, bars.top, 0, bars.bottom)
             insets
         }
+    }
+
+    override fun onSaveInstanceState(outState: Bundle) {
+        super.onSaveInstanceState(outState)
+        outState.putInt("tab", tab)
     }
 
     override fun onResume() {
