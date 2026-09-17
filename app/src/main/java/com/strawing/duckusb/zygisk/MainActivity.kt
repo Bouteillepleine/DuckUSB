@@ -110,7 +110,7 @@ class MainActivity : AppCompatActivity() {
         box.addView(TextView(this).apply {
             text = when {
                 live && !rootAvailable -> "Active, but no root access"
-                live -> "Active in system_server"
+                live -> "Active"
                 !rootAvailable -> "No root access"
                 !moduleInstalled -> "Module not installed"
                 hooksKilled -> "Hooks disabled (safe mode)"
@@ -126,7 +126,7 @@ class MainActivity : AppCompatActivity() {
             !rootAvailable -> "Grant root to the app so it can read and write the module configuration."
             !moduleInstalled -> "Flash DuckUSB-Zygisk.zip in your root manager, then reboot."
             hooksKilled -> "The boot guard or the kill switch disabled the hooks. Turn them back on below."
-            live -> "The module is injected into this app, so its hooks are running."
+            live -> "The module is injected and its hooks are running. Scoped apps read USB debugging as off."
             else -> "The module is installed but was not injected here. Reboot, or check that Zygisk is enabled."
         }
         box.addView(TextView(this).apply {

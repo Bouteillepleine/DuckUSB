@@ -1,3 +1,9 @@
-[submodule "external/AndroidVMTools"]
-	path = external/AndroidVMTools
-	url = https://github.com/aerath-stuff/AndroidVMTools
+[submodule "external/LSPlant"]
+	path = external/LSPlant
+	url = https://github.com/LSPosed/LSPlant.git
+[submodule "external/Dobby"]
+	path = external/Dobby
+	url = https://github.com/LSPosed/Dobby.git
+[submodule "external/xz-embedded"]
+	path = external/xz-embedded
+	url = https://github.com/tukaani-project/xz-embedded.git

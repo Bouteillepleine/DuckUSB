@@ -1,83 +1,92 @@
 # DuckUSB (Zygisk)
 
-DuckUSB without Xposed. Same two tricks as the LSPosed module — make chosen apps read USB
-debugging, wireless debugging and Developer Options as **off**, and swallow the persistent
-"USB debugging enabled" notification — implemented as a Zygisk module instead.
+DuckUSB without Xposed. Chosen apps read USB debugging, wireless debugging and Developer Options
+as **off**, and read `sys.usb.*` / `init.svc.adbd` as if adb were not running — while the shell,
+the system and everything unscoped keep seeing the truth.
 
-Requires root and a Zygisk implementation (ZygiskNext / NeoZygisk, ReZygisk, Zygisk on
-KernelSU, or Magisk's built-in Zygisk). It does **not** require LSPosed, and nothing about it
-is visible to `service list`.
+Requires root and a Zygisk implementation (ZygiskNext / NeoZygisk, ReZygisk, Zygisk on KernelSU,
+or Magisk's built-in Zygisk). No LSPosed, and nothing is registered with `ServiceManager`.
 
-## What it does
+## Verified on device
 
-| | Where it runs |
+OnePlus 15 (CPH2747), Android 16 / SDK 36, KernelSU Next + ReZygisk. A scoped app reads:
+
+| read path | scoped app | shell |
+|---|---|---|
+| `Settings.Global.getString` | `0` | `1` |
+| `content://settings/global/adb_enabled` | `0` | `1` |
+| `content://settings/global` with `name=?` | `0` | `1` |
+| bulk `content://settings/global` sweep | `0` | `1` |
+| `sys.usb.state` in-process | `mtp` | `mtp,adb` |
+| `init.svc.adbd` in-process | `stopped` | `running` |
+
+All four settings paths agree, which is the point: a detector that cross-checks the getter
+against a direct cursor query sees one consistent answer.
+
+## How it is built
+
+| piece | where |
 |---|---|
-| `adb_enabled`, `adb_wifi_enabled`, `development_settings_enabled` read `0` | system_server, `SettingsProvider.call` |
-| the same keys rewritten in cursor reads (bulk table sweeps and `name=?` selections) | system_server, `SettingsProvider.query` |
-| the ADB notification never reaches the shade | system_server, `NotificationManagerService.enqueueNotificationInternal` and `NotificationManager.notify*` |
-| `sys.usb.config`, `sys.usb.state`, `init.svc.adbd` lie to scoped apps | the scoped app process, libc `__system_property_*` |
+| module framework, dex injection, per-process scope | ZygoteLoader (`packages/` directory, consulted at fork) |
+| Java method hooking | **LSPlant**, the engine LSPosed uses |
+| inline hooking (for LSPlant and for libc) | **Dobby** — the `LSPosed/Dobby` fork; upstream will not assemble on NDK 29 |
+| ART symbols | parsed out of `libart.so`, including the LZMA-compressed `.gnu_debugdata` mini-symtab (xz-embedded) |
+| settings spoof | inside the scoped app: `Settings$NameValueCache.getStringForUser`, the static getters, and `ContentResolver.query` cursors |
+| property spoof | inside the scoped app: libc `__system_property_get` / `_read_callback` / `_read` |
 
-Everything is per-caller: the spoof only applies to the packages you pick. Root, shell,
-system uids, the OS file-transfer plumbing (`com.android.mtp` and friends) and DuckUSB itself
-always get the truth, so adb, MTP and the Settings toggle keep working.
+Non-scoped apps get no injection at all — ZygoteLoader checks the `packages/` directory per fork,
+so nothing is loaded into processes you did not pick.
 
-### Compared with the LSPosed build
+### system_server
 
-* **No per-app Java hooks.** The settings spoof lives entirely in system_server, so a scoped
-  app's own process gets no LSPlant residue — no dirty `libart.so` / `linker64` pages for a
-  detector to find in its own `smaps`. Only the property spoof touches the app process, and
-  only when you enable it.
-* **The query path is covered.** The LSPosed build spoofed the static getters and the provider
-  `call`; a caller that queried `content://settings/global` directly read the true value, and
-  cross-checking the two paths exposed the spoof. This build rewrites the cursor too.
-* **Scope without LSPosed.** The app list is the module's own `packages/` directory, which
-  ZygoteLoader consults per process, so non-scoped apps get no injection at all.
-* **A boot guard.** Three failed boots in a row and `post-fs-data.sh` disables the hooks by
-  itself. There is also a manual kill switch in the app.
+The notification suppressor is the only thing that would run in `system_server`, and it is
+**opt-in and off by default** (`hookSystemServer` in `config.json`). It bootlooped the test device
+once, so it stays off until it is proven. Two guards exist for when you do turn it on:
+
+* `service.sh` watches for `sys.boot_completed`; if it has not arrived within 150 s it writes
+  `disable_hooks` and reboots, which survives a zygote crash loop (`post-fs-data.sh`'s boot
+  counter does not — a crash loop never re-runs it).
+* `disable_hooks` is also the manual kill switch, exposed in the app.
+
+If a boot ever hangs: hold **Volume Down** during boot for KernelSU safe mode, which disables all
+modules.
 
 ## Install
 
-1. Flash `DuckUSB-Zygisk-<version>-release.zip` in your root manager. The installer aborts if
-   no Zygisk implementation is present, and keeps any existing configuration.
-2. Install the manager app (`app-release.apk`) and grant it root.
-3. Reboot.
-4. Open the app → **Scope** → pick the apps that should be lied to.
+1. Flash the zip in your root manager (it aborts if no Zygisk implementation is present, and keeps
+   an existing configuration).
+2. Install the manager app and grant it root.
+3. Reboot, open the app, **Choose apps**, pick your detectors.
 
-Scope changes apply to apps started afterwards; the settings spoof applies immediately to
-anything that reads a key after the change.
+Scope changes apply the next time an app starts. Writing config while a module update is staged in
+`modules_update/` would otherwise be lost on the next boot, so the app mirrors writes into the
+staged copy.
 
 ## Layout
 
 ```
-common/   config model, AIDL, the constants both halves share
-zygote/   the Zygisk module: ZygoteLoader entry point, the hooks, the libc spoof
+common/   config model and shared constants
+zygote/   the module: ZygoteLoader entry point, hooks, native library
 app/      the manager: status, toggles, scope picker, root writes
-external/ AndroidVMTools (submodule) — ART method hooking without Xposed
+probe/    a debuggable app that logs every read path — the regression harness
+external/ LSPlant, Dobby, xz-embedded
 ```
-
-The module talks to the app over a binder handed out through the settings provider hook
-itself (`call("duckusb_get_service", "service")`), gated on the manager's own uid. Nothing is
-registered with `ServiceManager`.
-
-Configuration lives in `/data/adb/modules/duckusb_zygisk/config.json`, read at process fork
-through the module-directory fd and pushed live over the binder when the app changes it.
 
 ## Build
 
 ```bash
-git submodule update --init
+git submodule update --init --recursive
 ./gradlew :zygote:assembleRelease :app:assembleRelease
 ```
 
-Outputs: `zygote/build/outputs/magisk/release/` (the flashable zip) and
-`app/build/outputs/apk/release/`. Drop a `key.properties` next to `build.gradle.kts` to sign
-the manager app; the module zip needs no signing.
+Needs CMake 3.31.6 (`sdkmanager "cmake;3.31.6"`, LSPlant wants ≥ 3.28 and C++23 modules) and
+NDK 29.0.14206865. Outputs land in `zygote/build/outputs/magisk/release/` and
+`app/build/outputs/apk/`.
 
 ## Known limits
 
-* `getprop` is a separate process, so a detector that compares an in-process property read
-  against `getprop` output still sees a difference. That is why `persist.sys.usb.config` is
-  deliberately left truthful.
-* Java hooking in system_server rides ART internals (AndroidVMTools). New Android releases can
-  break it before the upstream library catches up — that is what the boot guard is for.
-* Zygisk itself remains detectable. This module removes the LSPosed surface, not the Zygisk one.
+* `getprop` is a separate process, so a detector comparing an in-process property read against
+  `getprop` output still sees a difference. That is why `persist.sys.usb.config` is left truthful:
+  a spoof that only half-matches is louder than no spoof.
+* The notification suppressor is unproven. See above.
+* Zygisk itself remains detectable. This removes the LSPosed surface, not the Zygisk one.
