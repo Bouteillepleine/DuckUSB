@@ -6,6 +6,9 @@ import com.strawing.duckusb.zygote.util.ModuleConfig
 
 object AppPart {
 
+    @Volatile
+    private var pendingModuleDir: String? = null
+
     fun preSpecialize(packageName: String?, moduleDir: String?) {
         if (packageName == null) return
         if (packageName == Config.PKG) return
@@ -19,7 +22,15 @@ object AppPart {
             return
         }
 
-        val ok = NativeProps.install(moduleDir, Config.PROP_OVERRIDES)
-        Logx.v { "property spoof for $packageName installed=$ok" }
+        pendingModuleDir = moduleDir
+        val ok = NativeProps.preload(moduleDir)
+        Logx.v { "native library preloaded for $packageName: $ok" }
+    }
+
+    fun postSpecialize() {
+        val dir = pendingModuleDir ?: return
+        pendingModuleDir = null
+        val ok = NativeProps.install(dir, Config.PROP_OVERRIDES)
+        Logx.v { "property spoof installed=$ok" }
     }
 }

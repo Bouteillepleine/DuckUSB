@@ -37,6 +37,13 @@ object NativeProps {
         return true
     }
 
+    fun preload(moduleDir: String?): Boolean = try {
+        load(moduleDir)
+    } catch (t: Throwable) {
+        Logx.e("native preload failed", t)
+        false
+    }
+
     fun install(moduleDir: String?, overrides: Map<String, String>): Boolean {
         try {
             if (!load(moduleDir)) return false

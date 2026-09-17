@@ -24,6 +24,8 @@ object SystemServerPart {
     private const val SETTINGS_PROVIDER = "com.android.providers.settings.SettingsProvider"
     private const val NMS_CLASS = "com.android.server.notification.NotificationManagerService"
 
+    private val SETTING_GETTERS = setOf("getGlobalSetting", "getSecureSetting", "getSystemSetting")
+
     @Volatile
     var service: DuckService? = null
         private set
@@ -86,16 +88,20 @@ object SystemServerPart {
         settingsHooked = true
         var count = 0
         for (m in clazz.declaredMethods) {
-            when {
-                m.name == "call" && m.parameterCount >= 3 -> if (XHook.hook(m, ::onProviderCall)) count++
-                m.name == "query" && m.parameterCount >= 3 -> if (XHook.hook(m, ::onProviderQuery)) count++
+            val hooked = when {
+                m.name == "call" && m.parameterCount >= 3 -> XHook.hook(m, ::onProviderCall)
+                m.name == "query" && m.parameterCount >= 3 -> XHook.hook(m, ::onProviderQuery)
+                m.name in SETTING_GETTERS -> XHook.hook(m, ::onGetSetting)
+                else -> false
+            }
+            if (hooked) {
+                count++
+                Logx.i("hooked ${m.name}(${m.parameterTypes.joinToString(",") { it.simpleName }})")
             }
         }
         service?.hookCount = count
         service?.installedAtRealtimeMs = SystemClock.elapsedRealtime()
-        val deopt = XHook.findClass("android.content.ContentProvider")
-            ?.let { XHook.deoptimizeAll(it, "call") } ?: 0
-        Logx.i("settings provider hooked: $count methods on ${clazz.name}, deoptimized $deopt dispatchers")
+        Logx.i("settings provider hooked: $count methods on ${clazz.name}")
     }
 
     private fun callingUid(): Int? = try {
@@ -156,6 +162,26 @@ object SystemServerPart {
         bundle.putInt(Config.CALL_GENERATION_INDEX, -1)
         svc.note(uid, key)
         Logx.v { "spoofed $key for uid $uid" }
+    }
+
+    private fun onGetSetting(f: Frame) {
+        val uid = callingUid()
+        f.proceed()
+        try {
+            val svc = service ?: return
+            if (uid == null || !svc.spoofingEnabled()) return
+            val key = f.args.firstOrNull { it is String } as? String ?: return
+            if (key !in Config.SPOOF_KEYS) return
+            if (!svc.isTarget(uid)) return
+            val bundle = f.result as? Bundle ?: return
+            if (!bundle.containsKey(Config.CALL_VALUE)) return
+            bundle.putString(Config.CALL_VALUE, "0")
+            bundle.putInt(Config.CALL_GENERATION_INDEX, -1)
+            svc.note(uid, key)
+            Logx.v { "spoofed $key for uid $uid via ${f.member.name}" }
+        } catch (t: Throwable) {
+            Logx.e("setting getter spoof failed", t)
+        }
     }
 
     private fun onProviderQuery(f: Frame) {

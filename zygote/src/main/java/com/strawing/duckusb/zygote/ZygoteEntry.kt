@@ -25,7 +25,7 @@ object ZygoteEntry {
         try {
             val pkg = ZygoteLoader.getPackageName()
             Logx.v { "injected into $pkg (${ZygoteLoader.getProcessName()})" }
-            if (pkg == Config.SYSTEM_SERVER_PACKAGE) SystemServerPart.init()
+            if (pkg == Config.SYSTEM_SERVER_PACKAGE) SystemServerPart.init() else AppPart.postSpecialize()
         } catch (t: Throwable) {
             Logx.e("main failed", t)
         }
