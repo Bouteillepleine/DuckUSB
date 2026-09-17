@@ -17,7 +17,6 @@ import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import com.google.android.material.card.MaterialCardView
 import com.google.android.material.materialswitch.MaterialSwitch
-import com.strawing.duckusb.common.Bridge
 import com.strawing.duckusb.common.Config
 import com.strawing.duckusb.common.DuckConfig
 import com.google.android.material.R as MR
@@ -29,7 +28,7 @@ class MainActivity : AppCompatActivity() {
     private var rootAvailable = false
     private var moduleInstalled = false
     private var hooksKilled = false
-    private var serviceState: Bundle? = null
+    private var live = false
 
     private val cPrimary get() = attr(MR.attr.colorPrimary)
     private val cOnSurface get() = attr(MR.attr.colorOnSurface)
@@ -74,7 +73,7 @@ class MainActivity : AppCompatActivity() {
         moduleInstalled = rootAvailable && Root.moduleInstalled()
         hooksKilled = moduleInstalled && Root.hooksKilled()
         config = (if (moduleInstalled) Root.readConfig() else null) ?: config
-        serviceState = ServiceClient.state(this)
+        live = runCatching { System.getProperty(Config.LIVE_PROPERTY) != null }.getOrDefault(false)
         render()
     }
 
@@ -85,7 +84,6 @@ class MainActivity : AppCompatActivity() {
         root.addView(scopeCard())
         root.addView(controlsCard())
         root.addView(readingsCard())
-        root.addView(recordsCard())
         root.addView(footer())
     }
 
@@ -106,7 +104,6 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun statusCard(): View {
-        val live = serviceState != null
         val card = filledCard(if (live) cPrimaryCont else cErrorCont, dp(16))
         val box = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
 
@@ -129,8 +126,8 @@ class MainActivity : AppCompatActivity() {
             !rootAvailable -> "Grant root to the app so it can read and write the module configuration."
             !moduleInstalled -> "Flash DuckUSB-Zygisk.zip in your root manager, then reboot."
             hooksKilled -> "The boot guard or the kill switch disabled the hooks. Turn them back on below."
-            live -> "The settings provider and the notification service are hooked. ${serviceState?.getInt(Bridge.STATE_HOOKS) ?: 0} provider methods, ${serviceState?.getInt(Bridge.STATE_NOTIF_BLOCKED) ?: 0} notifications swallowed."
-            else -> "The module is installed but its service is not answering. Reboot, or check that Zygisk is enabled."
+            live -> "The module is injected into this app, so its hooks are running."
+            else -> "The module is installed but was not injected here. Reboot, or check that Zygisk is enabled."
         }
         box.addView(TextView(this).apply {
             text = detail
@@ -256,34 +253,8 @@ class MainActivity : AppCompatActivity() {
         return card
     }
 
-    private fun recordsCard(): View {
-        val card = outlinedCard()
-        val box = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(dp(16), dp(16), dp(16), dp(16))
-        }
-        box.addView(sectionLabel("Spoofed callers"))
-        val records = ServiceClient.records(this)
-        if (records.isEmpty()) {
-            box.addView(TextView(this).apply {
-                text = "Nothing yet. A scoped app has to read one of the keys first."
-                setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
-                setTextColor(cOnSurfaceVar)
-            })
-        } else {
-            for (record in records) {
-                val uid = record.getInt(Bridge.REC_UID)
-                val count = record.getInt(Bridge.REC_COUNT)
-                val keys = record.getStringArrayList(Bridge.REC_KEYS)?.joinToString(", ").orEmpty()
-                box.addView(readingRow(nameForUid(uid), "$count× · $keys"))
-            }
-        }
-        card.addView(box)
-        return card
-    }
-
     private fun footer(): View = TextView(this).apply {
-        text = "Module id ${Config.MODULE_ID} · service v${serviceState?.getInt(Bridge.STATE_VERSION) ?: 0}"
+        text = "Module id ${Config.MODULE_ID} · scope changes apply when an app restarts"
         setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f)
         setTextColor(cOnSurfaceVar)
         gravity = Gravity.CENTER
@@ -292,7 +263,6 @@ class MainActivity : AppCompatActivity() {
 
     private fun save() {
         if (moduleInstalled) Root.writeConfig(config)
-        ServiceClient.push(this, config)
     }
 
     private fun toggleRow(
@@ -360,9 +330,6 @@ class MainActivity : AppCompatActivity() {
     } catch (_: Throwable) {
         "?"
     }
-
-    private fun nameForUid(uid: Int): String =
-        packageManager.getPackagesForUid(uid)?.firstOrNull() ?: "uid $uid"
 
     private fun sectionLabel(text: String): View = TextView(this).apply {
         this.text = text.uppercase()

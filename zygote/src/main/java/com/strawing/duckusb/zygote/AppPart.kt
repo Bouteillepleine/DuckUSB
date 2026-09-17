@@ -24,7 +24,10 @@ object AppPart {
 
     fun preSpecialize(packageName: String?, moduleDir: String?) {
         if (packageName == null) return
-        if (packageName == Config.PKG) return
+        if (packageName == Config.PKG) {
+            announceToManager()
+            return
+        }
         if (packageName in Config.SKIP_SPOOF_PROCESSES) return
         if (packageName in Config.SPARE_PACKAGES) return
 
@@ -75,6 +78,12 @@ object AppPart {
             java.lang.Integer.TYPE -> f.result = 0
             String::class.java -> f.result = "0"
             else -> f.proceed()
+        }
+    }
+
+    private fun announceToManager() {
+        runCatching {
+            System.setProperty(Config.LIVE_PROPERTY, Config.MODULE_VERSION)
         }
     }
 

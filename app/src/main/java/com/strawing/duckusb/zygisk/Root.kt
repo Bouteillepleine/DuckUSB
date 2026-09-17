@@ -63,6 +63,7 @@ object Root {
     fun syncPackages(targets: Set<String>): Boolean {
         val keep = LinkedHashSet<String>().apply {
             add(Config.SYSTEM_SERVER_PACKAGE)
+            add(Config.PKG)
             addAll(targets)
         }
         val commands = ArrayList<String>()

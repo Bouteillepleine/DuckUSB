@@ -3,6 +3,8 @@ package com.strawing.duckusb.common
 object Config {
     const val PKG = "com.strawing.duckusb.zygisk"
     const val MODULE_ID = "duckusb_zygisk"
+    const val MODULE_VERSION = "2.0.0"
+    const val LIVE_PROPERTY = "duckusb.zygisk.live"
     const val MODULE_DIR = "/data/adb/modules/$MODULE_ID"
     const val MODULE_UPDATE_DIR = "/data/adb/modules_update/$MODULE_ID"
     const val CONFIG_FILE = "$MODULE_DIR/config.json"

@@ -116,7 +116,6 @@ class ScopeActivity : AppCompatActivity() {
     private fun save() {
         config.targets = LinkedHashSet(selected)
         val wrote = Root.writeConfig(config) && Root.syncPackages(selected)
-        ServiceClient.push(this, config)
         if (!wrote) {
             Toast.makeText(this, "Could not write the module configuration", Toast.LENGTH_SHORT).show()
         }
