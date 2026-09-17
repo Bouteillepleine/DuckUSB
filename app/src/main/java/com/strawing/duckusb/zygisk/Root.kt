@@ -90,6 +90,16 @@ object Root {
         return result.out.firstOrNull()?.trim()?.takeIf { it.isNotEmpty() }
     }
 
+    fun zygiskFlavor(): String {
+        for (dir in ZYGISK_MODULES) {
+            val result = exec("grep -m1 '^name=' $dir/module.prop 2>/dev/null")
+            val name = result.out.firstOrNull()?.trim()?.removePrefix("name=")?.trim()
+            if (!name.isNullOrEmpty()) return name
+        }
+        if (exec("test -f /data/adb/magisk/magisk64").isSuccess) return "Magisk built-in"
+        return "unknown"
+    }
+
     fun listedPackages(): Set<String> {
         val result = exec("ls -1 ${Config.PACKAGES_DIR} 2>/dev/null")
         if (!result.isSuccess) return emptySet()
@@ -124,6 +134,12 @@ object Root {
     }
 
     private val PACKAGE_PATTERN = Regex("[A-Za-z0-9._]+")
+
+    private val ZYGISK_MODULES = listOf(
+        "/data/adb/modules/zygisksu",
+        "/data/adb/modules/rezygisk",
+        "/data/adb/modules/zygisk_next",
+    )
 
     private val FAILED = object : Shell.Result() {
         override fun getOut(): MutableList<String> = ArrayList()

@@ -4,6 +4,7 @@ import android.content.Intent
 import android.graphics.Color
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
+import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
 import android.util.TypedValue
@@ -13,6 +14,7 @@ import android.view.ViewGroup
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
+import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
@@ -35,6 +37,7 @@ class MainActivity : AppCompatActivity() {
     private var serviceState: Bundle? = null
     private var records: List<Bundle> = emptyList()
     private var recordsOpen = false
+    private var zygiskFlavor = "unknown"
 
     private val cOnSurface get() = attr(MR.attr.colorOnSurface)
     private val cOnSurfaceVar get() = attr(MR.attr.colorOnSurfaceVariant)
@@ -83,6 +86,7 @@ class MainActivity : AppCompatActivity() {
         live = runCatching { System.getProperty(Config.LIVE_PROPERTY) != null }.getOrDefault(false)
         serviceState = ServiceClient.state(this)
         records = ServiceClient.records(this).sortedByDescending { it.getInt(Bridge.REC_COUNT) }
+        zygiskFlavor = if (rootAvailable) Root.zygiskFlavor() else "unknown"
         render()
     }
 
@@ -90,6 +94,8 @@ class MainActivity : AppCompatActivity() {
         root.removeAllViews()
         root.addView(header())
         root.addView(statusCard())
+        root.addView(sectionLabel("Module"))
+        root.addView(infoCard())
         root.addView(sectionLabel("Diagnostics"))
         root.addView(diagnosticsCard())
         root.addView(sectionLabel("What this app sees vs the device"))
@@ -102,20 +108,86 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun header(): View = LinearLayout(this).apply {
-        orientation = LinearLayout.VERTICAL
+        orientation = LinearLayout.HORIZONTAL
+        gravity = Gravity.CENTER_VERTICAL
         setPadding(dp(4), dp(16), dp(4), dp(12))
-        addView(TextView(this@MainActivity).apply {
-            text = getString(R.string.app_name)
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 30f)
-            setTypeface(typeface, Typeface.BOLD)
-            setTextColor(cOnSurface)
+        addView(LinearLayout(this@MainActivity).apply {
+            orientation = LinearLayout.VERTICAL
+            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+            addView(TextView(this@MainActivity).apply {
+                text = getString(R.string.app_name)
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 30f)
+                setTypeface(typeface, Typeface.BOLD)
+                setTextColor(cOnSurface)
+            })
+            addView(TextView(this@MainActivity).apply {
+                text = "Zygisk module ${appVersion()} · no Xposed framework"
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
+                setTextColor(cOnSurfaceVar)
+            })
         })
-        addView(TextView(this@MainActivity).apply {
-            text = "Zygisk module ${appVersion()} · no Xposed framework"
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
-            setTextColor(cOnSurfaceVar)
-        })
+        addView(themeButton())
     }
+
+    private fun themeButton(): View {
+        val mode = Theming.current(this)
+        return TextView(this).apply {
+            text = mode.icon
+            gravity = Gravity.CENTER
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 18f)
+            contentDescription = "Theme: ${mode.label}"
+            layoutParams = LinearLayout.LayoutParams(dp(44), dp(44))
+            background = GradientDrawable().apply {
+                shape = GradientDrawable.OVAL
+                setColor(cSurfaceCard)
+                setStroke(dp(1), cOutline)
+            }
+            isClickable = true
+            setOnClickListener {
+                val next = mode.next()
+                Theming.apply(this@MainActivity, next)
+                Toast.makeText(this@MainActivity, next.label, Toast.LENGTH_SHORT).show()
+                recreate()
+            }
+        }
+    }
+
+    private fun infoCard(): View {
+        val card = outlinedCard()
+        val col = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(16), dp(10), dp(16), dp(10))
+        }
+        col.addView(infoRow("Module version", appVersion()))
+        col.addView(infoRow("Hook engine", "LSPlant + Dobby"))
+        col.addView(infoRow("Zygisk", zygiskFlavor))
+        col.addView(infoRow("Injected here", if (live) "yes" else "no"))
+        col.addView(infoRow("Android", "${Build.VERSION.RELEASE} (API ${Build.VERSION.SDK_INT})"))
+        col.addView(infoRow("Device", "${Build.MANUFACTURER} ${Build.MODEL}"))
+        card.addView(col)
+        return card
+    }
+
+    private fun infoRow(label: String, value: String): View =
+        LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(0, dp(7), 0, dp(7))
+            addView(TextView(this@MainActivity).apply {
+                text = label
+                setTextColor(cOnSurface)
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 13.5f)
+                layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+            })
+            addView(TextView(this@MainActivity).apply {
+                text = value
+                setTextColor(cOnSurfaceVar)
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 13.5f)
+                gravity = Gravity.END
+                maxLines = 1
+                ellipsize = android.text.TextUtils.TruncateAt.END
+            })
+        }
 
     private fun statusCard(): View {
         val hookLive = serviceState != null
@@ -335,7 +407,7 @@ class MainActivity : AppCompatActivity() {
             col.addView(readingRow(key, globalSetting(key), if (rootAvailable) Root.globalSetting(key) else null))
         }
         col.addView(thinDivider())
-        for (key in listOf("sys.usb.state", "sys.usb.config", "init.svc.adbd")) {
+        for (key in listOf("persist.sys.usb.config", "sys.usb.state", "sys.usb.config", "init.svc.adbd")) {
             col.addView(readingRow(key, systemProperty(key), if (rootAvailable) Root.property(key) else null))
         }
         col.addView(TextView(this).apply {
@@ -390,6 +462,14 @@ class MainActivity : AppCompatActivity() {
             toggleRow("🔕", "Hide the notification", "Swallows the persistent USB debugging notification. Needs a reboot.", config.hideNotif) {
                 config.hideNotif = it
                 config.hookSystemServer = it || config.frameworkMode
+                save()
+                reload()
+            }
+        )
+        col.addView(thinDivider())
+        col.addView(
+            toggleRow("🏷️", "Mask the USB config property", "persist.sys.usb.config reads mtp instead of adb, in the property area itself so every read route agrees. Reverts on reboot. Needs a reboot.", config.spoofProps) {
+                config.spoofProps = it
                 save()
                 reload()
             }
