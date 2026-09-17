@@ -88,7 +88,7 @@ object FrameworkPart {
 
     private fun isTarget(uid: Int): Boolean {
         val config = ModuleConfig.config
-        if (config.targets.isEmpty()) return false
+        if (config.targets.isEmpty() && !config.frameworkAllApps) return false
         val appId = uid % Config.PER_USER_RANGE
         if (appId < Config.FIRST_APP_UID) return false
         synchronized(lock) {
@@ -104,7 +104,11 @@ object FrameworkPart {
             Binder.restoreCallingIdentity(token)
         } ?: return false
         if (packages.any { it == Config.PKG }) return false
-        val target = packages.any { config.isTarget(it) }
+        if (packages.any { it in Config.SPARE_PACKAGES }) {
+            synchronized(lock) { targetCache.put(uid, false) }
+            return false
+        }
+        val target = if (config.frameworkAllApps) true else packages.any { config.isTarget(it) }
         synchronized(lock) { targetCache.put(uid, target) }
         return target
     }
