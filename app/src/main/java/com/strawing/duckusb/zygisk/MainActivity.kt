@@ -11,6 +11,7 @@ import android.util.TypedValue
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
+import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
@@ -18,6 +19,7 @@ import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
+import com.google.android.material.bottomnavigation.BottomNavigationView
 import com.google.android.material.card.MaterialCardView
 import com.google.android.material.color.MaterialColors
 import com.google.android.material.materialswitch.MaterialSwitch
@@ -29,6 +31,8 @@ import com.google.android.material.R as MR
 class MainActivity : AppCompatActivity() {
 
     private lateinit var root: LinearLayout
+    private lateinit var headerHolder: LinearLayout
+    private lateinit var nav: BottomNavigationView
     private var config = DuckConfig()
     private var rootAvailable = false
     private var moduleInstalled = false
@@ -38,6 +42,7 @@ class MainActivity : AppCompatActivity() {
     private var records: List<Bundle> = emptyList()
     private var recordsOpen = false
     private var zygiskFlavor = "unknown"
+    private var tab = R.id.tab_status
 
     private val cOnSurface get() = attr(MR.attr.colorOnSurface)
     private val cOnSurfaceVar get() = attr(MR.attr.colorOnSurfaceVariant)
@@ -53,7 +58,7 @@ class MainActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(16), dp(8), dp(16), dp(24))
+            setPadding(dp(16), 0, dp(16), dp(24))
         }
         val scroll = ScrollView(this).apply {
             isFillViewport = true
@@ -64,9 +69,32 @@ class MainActivity : AppCompatActivity() {
                     ViewGroup.LayoutParams.WRAP_CONTENT
                 )
             )
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f
+            )
         }
-        setContentView(scroll)
-        ViewCompat.setOnApplyWindowInsetsListener(scroll) { v, insets ->
+        headerHolder = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(16), 0, dp(16), 0)
+        }
+        nav = BottomNavigationView(this).apply {
+            inflateMenu(R.menu.bottom_nav)
+            selectedItemId = tab
+            setOnItemSelectedListener { item ->
+                tab = item.itemId
+                renderContent()
+                scroll.scrollTo(0, 0)
+                true
+            }
+        }
+        val shell = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            addView(headerHolder)
+            addView(scroll)
+            addView(nav)
+        }
+        setContentView(shell)
+        ViewCompat.setOnApplyWindowInsetsListener(shell) { v, insets ->
             val bars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
             v.setPadding(0, bars.top, 0, bars.bottom)
             insets
@@ -91,26 +119,39 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun render() {
+        headerHolder.removeAllViews()
+        headerHolder.addView(header())
+        renderContent()
+    }
+
+    private fun renderContent() {
         root.removeAllViews()
-        root.addView(header())
-        root.addView(statusCard())
-        root.addView(sectionLabel("Module"))
-        root.addView(infoCard())
-        root.addView(sectionLabel("Diagnostics"))
-        root.addView(diagnosticsCard())
-        root.addView(sectionLabel("What this app sees vs the device"))
-        root.addView(readingsCard())
-        root.addView(sectionLabel("Behaviour"))
-        root.addView(controlsCard())
-        root.addView(sectionLabel("Coverage"))
-        root.addView(scopeCard())
-        root.addView(footer())
+        when (tab) {
+            R.id.tab_behaviour -> {
+                root.addView(sectionLabel("Behaviour"))
+                root.addView(controlsCard())
+                root.addView(sectionLabel("Coverage"))
+                root.addView(scopeCard())
+            }
+            R.id.tab_diagnostics -> {
+                root.addView(sectionLabel("Diagnostics"))
+                root.addView(diagnosticsCard())
+                root.addView(sectionLabel("What this app sees vs the device"))
+                root.addView(readingsCard())
+            }
+            else -> {
+                root.addView(statusCard())
+                root.addView(sectionLabel("Module"))
+                root.addView(infoCard())
+                root.addView(footer())
+            }
+        }
     }
 
     private fun header(): View = LinearLayout(this).apply {
         orientation = LinearLayout.HORIZONTAL
         gravity = Gravity.CENTER_VERTICAL
-        setPadding(dp(4), dp(16), dp(4), dp(12))
+        setPadding(dp(4), dp(14), dp(4), dp(10))
         addView(LinearLayout(this@MainActivity).apply {
             orientation = LinearLayout.VERTICAL
             layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
@@ -119,11 +160,6 @@ class MainActivity : AppCompatActivity() {
                 setTextSize(TypedValue.COMPLEX_UNIT_SP, 30f)
                 setTypeface(typeface, Typeface.BOLD)
                 setTextColor(cOnSurface)
-            })
-            addView(TextView(this@MainActivity).apply {
-                text = "Zygisk module ${appVersion()} · no Xposed framework"
-                setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
-                setTextColor(cOnSurfaceVar)
             })
         })
         addView(themeButton())
@@ -427,7 +463,7 @@ class MainActivity : AppCompatActivity() {
             setPadding(dp(16), dp(6), dp(16), dp(6))
         }
         col.addView(
-            toggleRow("🧩", "Framework mode", "The lie is told in system_server. Nothing is injected into the apps being fooled. Needs a reboot.", config.frameworkMode) {
+            toggleRow(R.drawable.ic_framework, "Framework mode", "The lie is told in system_server. Nothing is injected into the apps being fooled. Needs a reboot.", config.frameworkMode) {
                 config.frameworkMode = it
                 config.hookSystemServer = it || config.hideNotif
                 save()
@@ -436,7 +472,7 @@ class MainActivity : AppCompatActivity() {
         )
         col.addView(thinDivider())
         col.addView(
-            toggleRow("🌍", "Cover every app", "No scope list at all. Shell, system uids and the file-transfer apps still read the truth.", config.frameworkAllApps) {
+            toggleRow(R.drawable.ic_allapps, "Cover every app", "No scope list at all. Shell, system uids and the file-transfer apps still read the truth.", config.frameworkAllApps) {
                 config.frameworkAllApps = it
                 save()
                 reload()
@@ -444,7 +480,7 @@ class MainActivity : AppCompatActivity() {
         )
         col.addView(thinDivider())
         col.addView(
-            toggleRow("🔌", "Spoof USB debugging", "adb_enabled · adb_wifi_enabled · Developer Options → 0", config.spoofSettings) {
+            toggleRow(R.drawable.ic_usb, "Spoof USB debugging", "adb_enabled · adb_wifi_enabled · Developer Options → 0", config.spoofSettings) {
                 config.spoofSettings = it
                 save()
                 reload()
@@ -452,14 +488,14 @@ class MainActivity : AppCompatActivity() {
         )
         col.addView(thinDivider())
         col.addView(
-            toggleRow("🔎", "Cover the query path", "Also rewrites cursor reads of the settings tables, so a direct query agrees with the getter.", config.coverQueryPath) {
+            toggleRow(R.drawable.ic_query, "Cover the query path", "Also rewrites cursor reads of the settings tables, so a direct query agrees with the getter.", config.coverQueryPath) {
                 config.coverQueryPath = it
                 save()
             }
         )
         col.addView(thinDivider())
         col.addView(
-            toggleRow("🔕", "Hide the notification", "Swallows the persistent USB debugging notification. Needs a reboot.", config.hideNotif) {
+            toggleRow(R.drawable.ic_notif_off, "Hide the notification", "Swallows the persistent USB debugging notification. Needs a reboot.", config.hideNotif) {
                 config.hideNotif = it
                 config.hookSystemServer = it || config.frameworkMode
                 save()
@@ -468,7 +504,7 @@ class MainActivity : AppCompatActivity() {
         )
         col.addView(thinDivider())
         col.addView(
-            toggleRow("🏷️", "Mask the USB config property", "persist.sys.usb.config reads mtp instead of adb, in the property area itself so every read route agrees. Reverts on reboot. Needs a reboot.", config.spoofProps) {
+            toggleRow(R.drawable.ic_tag, "Mask the USB config property", "persist.sys.usb.config reads mtp instead of adb, in the property area itself so every read route agrees. Reverts on reboot. Needs a reboot.", config.spoofProps) {
                 config.spoofProps = it
                 save()
                 reload()
@@ -476,14 +512,14 @@ class MainActivity : AppCompatActivity() {
         )
         col.addView(thinDivider())
         col.addView(
-            toggleRow("📝", "Verbose log", "One logcat line per spoofed read. Off unless you are investigating.", config.verboseLog) {
+            toggleRow(R.drawable.ic_log, "Verbose log", "One logcat line per spoofed read. Off unless you are investigating.", config.verboseLog) {
                 config.verboseLog = it
                 save()
             }
         )
         col.addView(thinDivider())
         col.addView(
-            toggleRow("🛑", "Kill switch", "Disables every hook on the next boot without uninstalling.", hooksKilled) {
+            toggleRow(R.drawable.ic_power, "Kill switch", "Disables every hook on the next boot without uninstalling.", hooksKilled) {
                 hooksKilled = it
                 Root.setHooksKilled(it)
                 reload()
@@ -539,7 +575,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun toggleRow(
-        icon: String,
+        icon: Int,
         title: String,
         subtitle: String,
         checked: Boolean,
@@ -550,10 +586,12 @@ class MainActivity : AppCompatActivity() {
             gravity = Gravity.CENTER_VERTICAL
             setPadding(0, dp(12), 0, dp(12))
         }
-        row.addView(TextView(this).apply {
-            text = icon
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 18f)
-            setPadding(0, 0, dp(12), 0)
+        row.addView(ImageView(this).apply {
+            setImageResource(icon)
+            setColorFilter(cPrimary)
+            layoutParams = LinearLayout.LayoutParams(dp(24), dp(24)).apply {
+                rightMargin = dp(14)
+            }
         })
         val text = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
