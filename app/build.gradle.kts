@@ -25,8 +25,6 @@ android {
     compileSdk = 36
     namespace = "com.strawing.duckusb"
 
-    // IDuckService.aidl — the system_server <-> UI channel.
-    buildFeatures { aidl = true }
 
     defaultConfig {
         applicationId = "com.strawing.duckusb"

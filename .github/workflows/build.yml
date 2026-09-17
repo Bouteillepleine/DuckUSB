@@ -1,22 +1,18 @@
-name: Build APK
+name: Build
 
 on:
   push:
-    # Work branches build too, so a migration can be verified by CI long before it is
-    # anywhere near master. Building is all they do: publishing is gated on the ref being
-    # a tag (see the `release` job), which no branch push can satisfy.
-    branches: [ master, 'libxposed-*' ]
-    # A v* tag builds AND publishes a release (see the `release` job below).
+    branches: [ master, 'merge-*', 'libxposed-*' ]
     tags: [ 'v*' ]
   pull_request:
   workflow_dispatch:
 
-# Read-only by default; only the release job widens this, and only for tag builds.
 permissions:
   contents: read
 
 env:
-  NDK_VERSION: "27.2.12479018"
+  NDK_VERSION: "29.0.14206865"
+  CMAKE_VERSION: "3.31.6"
 
 jobs:
   build:
@@ -25,6 +21,21 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v5
 
+      - name: Fetch native dependencies
+        # Not `submodules: recursive` on the checkout: LSPlant declares two test-only
+        # submodules over git@github.com:, which a blanket recursive fetch tries (and fails)
+        # to clone over SSH. Only the ones the build actually compiles are pulled, including
+        # dex_builder, which a plain `--recursive` silently skips.
+        run: |
+          set -euo pipefail
+          git submodule update --init \
+            zygisk/external/LSPlant zygisk/external/Dobby zygisk/external/xz-embedded
+          git -C zygisk/external/LSPlant submodule update --init \
+            lsplant/src/main/jni/external/dex_builder
+          git -C zygisk/external/LSPlant/lsplant/src/main/jni/external/dex_builder \
+            submodule update --init external/parallel_hashmap
+          test -f zygisk/external/LSPlant/lsplant/src/main/jni/external/dex_builder/CMakeLists.txt
+
       - name: Set up JDK 21
         uses: actions/setup-java@v5
         with:
@@ -32,22 +43,20 @@ jobs:
           java-version: '21'
 
       - name: Drop machine-local JDK path
-        # gradle.properties pins org.gradle.java.home to a local Windows JBR;
-        # strip it on CI so Gradle uses the runner's JAVA_HOME (JDK 21).
         run: sed -i '/org.gradle.java.home/d' gradle.properties
 
-      - name: Install NDK
-        # The native prop-spoof lib (libduckusb.so) is built via ndk-build, so the
-        # exact NDK pinned by android.ndkVersion must be present on the runner.
-        run: echo "y" | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "ndk;${NDK_VERSION}"
+      - name: Install NDK and CMake
+        # LSPlant needs CMake >= 3.28 (C++23 modules); Dobby's arm64 assembly needs NDK 29.
+        run: |
+          set -euo pipefail
+          echo "y" | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" \
+            "ndk;${NDK_VERSION}" "cmake;${CMAKE_VERSION}"
 
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v6
 
       - name: Decode signing keystore
-        # The keystore is NOT in the repo. CI reconstructs it from a base64 secret and
-        # feeds the signing config via env vars (see app/build.gradle.kts). A fork without
-        # these secrets still builds — the release APK just comes out unsigned.
+        # Never in the repo. A fork without the secrets still builds, just unsigned.
         env:
           KEYSTORE_B64: ${{ secrets.DUCKUSB_KEYSTORE_BASE64 }}
         run: |
@@ -56,110 +65,91 @@ jobs:
             echo "DUCKUSB_STORE_FILE=$RUNNER_TEMP/duckusb-release.jks" >> "$GITHUB_ENV"
             echo "signing keystore decoded"
           else
-            echo "::warning::No DUCKUSB_KEYSTORE_BASE64 secret; release APK will be unsigned."
+            echo "::warning::No DUCKUSB_KEYSTORE_BASE64 secret; release artifacts will be unsigned."
           fi
 
-      - name: Build release APK
+      - name: Build
         env:
           DUCKUSB_STORE_PASSWORD: ${{ secrets.DUCKUSB_STORE_PASSWORD }}
           DUCKUSB_KEY_ALIAS: ${{ secrets.DUCKUSB_KEY_ALIAS }}
           DUCKUSB_KEY_PASSWORD: ${{ secrets.DUCKUSB_KEY_PASSWORD }}
         run: |
           chmod +x gradlew
-          ./gradlew :app:assembleRelease --no-daemon --stacktrace
+          ./gradlew :app:assembleRelease :zygisk:app:assembleRelease \
+            :zygisk:zygote:assembleRelease --no-daemon --stacktrace
 
-      - name: Verify APK (ABIs, entrypoints, hooked prop routes, self-skip guard)
-        # Codifies the release checklist. Uses here-strings (grep <<<) rather than
-        # `cmd | grep -q`: grep -q exits on the first match and closes the pipe, which under
-        # `pipefail` reports the producer's SIGPIPE as a failure even when the match succeeded.
+      - name: Verify the Xposed APK
+        # These files ARE the module as far as the framework is concerned: lose one and the
+        # APK still builds, still installs, and simply never loads. AGP can drop a META-INF
+        # path without warning, so the packaged bytes are checked, not the source tree.
         run: |
           set -euo pipefail
           APK=app/build/outputs/apk/release/app-release.apk
           LIST=$(unzip -l "$APK")
-          echo "Checking ABIs in $APK"
-          for abi in armeabi-v7a arm64-v8a x86 x86_64; do
-            grep -q "lib/$abi/libduckusb.so" <<< "$LIST" \
-              && echo "  ok: $abi" \
-              || { echo "  MISSING: lib/$abi/libduckusb.so"; exit 1; }
-          done
-          TOOLS=$(dirname "$(ls "$ANDROID_HOME"/ndk/"${NDK_VERSION}"/toolchains/llvm/prebuilt/*/bin/llvm-readelf | head -1)")
-          unzip -o -q "$APK" 'lib/arm64-v8a/libduckusb.so' -d _apkcheck
-          SO=_apkcheck/lib/arm64-v8a/libduckusb.so
-          SYMS=$("$TOOLS/llvm-readelf" --dyn-syms "$SO")
+          mkdir -p _check
 
-          echo "Checking exported entrypoints"
-          for sym in native_init Java_com_strawing_duckusb_NativeProps_setProps; do
-            grep -q "$sym" <<< "$SYMS" && echo "  ok: $sym exported" \
-              || { echo "  MISSING export: $sym"; exit 1; }
-          done
-
-          # Every public bionic route to a property value must still be referenced, or the
-          # spoof has silently gone partial. __system_property_get is the name route;
-          # _read_callback and _read are the two handle routes; _find resolves the handles
-          # that setProps caches. Dropping any one of these is how you get a property that
-          # reads spoofed one way and truthful another — which is a louder signal than not
-          # spoofing at all. (_read_callback resolves against LIBC_O, hence the loose match.)
-          echo "Checking bionic property routes are all covered"
-          for sym in __system_property_get __system_property_read_callback \
-                     __system_property_read __system_property_find; do
-            grep -qE "UND +${sym}@" <<< "$SYMS" && echo "  ok: $sym imported" \
-              || { echo "  MISSING import: $sym — a property read route is uncovered"; exit 1; }
-          done
-
-          # The self-skip guard that fixes issue #2: native_init must refuse to install libc
-          # hooks in DuckUSB's own process. If this literal disappears, the guard went with it
-          # and the UI is back to inline-hooking libc in a process that has no need of it.
-          echo "Checking self-skip guard"
-          grep -q 'com.strawing.duckusb' <<< "$("$TOOLS/llvm-strings" "$SO")" \
-            && echo "  ok: own-package guard string present" \
-            || { echo "  MISSING: own-package guard (see should_skip_hooks)"; exit 1; }
-
-          # Modern (libxposed) entry points. These four files ARE the module as far as the
-          # framework is concerned: lose any one and the APK still builds, still installs and
-          # simply never loads — the exact silent failure this project keeps having to debug.
-          # AGP will happily drop a META-INF path without warning, hence checking the packaged
-          # bytes rather than trusting the source tree.
-          echo "Checking libxposed entry points"
-          for f in module.prop java_init.list native_init.list scope.list; do
-            grep -q "META-INF/xposed/$f" <<< "$LIST" \
-              && echo "  ok: $f" \
+          for f in module.prop java_init.list scope.list; do
+            grep -q "META-INF/xposed/$f" <<< "$LIST" && echo "  ok: $f" \
               || { echo "  MISSING: META-INF/xposed/$f"; exit 1; }
           done
-          unzip -p "$APK" META-INF/xposed/module.prop > _apkcheck/module.prop
-          grep -qE '^minApiVersion=101$' _apkcheck/module.prop \
-            && echo "  ok: minApiVersion=101" \
-            || { echo "  module.prop does not declare minApiVersion=101"; cat _apkcheck/module.prop; exit 1; }
-          # java_init.list must name a class the APK actually ships, or the framework loads
-          # nothing and says nothing. Checked against the dex, not the source tree. Note the
-          # dex stores type descriptors (Lcom/foo/Bar;), never the dotted name — grepping for
-          # the dotted form finds nothing and would pass/fail for the wrong reason.
+
+          # The native half is gone; if this comes back, per-app injection came back with it
+          # and the module is detectable again.
+          grep -q "META-INF/xposed/native_init.list" <<< "$LIST" \
+            && { echo "  STALE: native_init.list is packaged but there is no native library"; exit 1; } \
+            || echo "  ok: no native_init.list"
+          grep -q "libduckusb.so" <<< "$LIST" \
+            && { echo "  STALE: libduckusb.so is packaged"; exit 1; } \
+            || echo "  ok: no bundled native library"
+          grep -q "assets/xposed_init" <<< "$LIST" \
+            && { echo "  STALE: legacy assets/xposed_init is packaged"; exit 1; } \
+            || echo "  ok: no legacy entry point"
+
+          unzip -p "$APK" META-INF/xposed/module.prop | tr -d '\r' > _check/module.prop
+          grep -qE '^minApiVersion=101$' _check/module.prop && echo "  ok: minApiVersion=101" \
+            || { echo "  module.prop does not declare minApiVersion=101"; cat _check/module.prop; exit 1; }
+
+          # java_init.list must name a class the APK ships. The dex stores type descriptors
+          # (Lcom/foo/Bar;), never the dotted name.
           ENTRY=$(unzip -p "$APK" META-INF/xposed/java_init.list | head -1 | tr -d '\r')
           DESC="L$(echo "$ENTRY" | tr '.' '/');"
-          echo "  entry class: $ENTRY  ($DESC)"
-          unzip -o -q "$APK" 'classes*.dex' -d _apkcheck
-          grep -aqF "$DESC" _apkcheck/classes*.dex \
-            && echo "  ok: entry class present in dex" \
+          unzip -o -q "$APK" 'classes*.dex' -d _check
+          grep -aqF "$DESC" _check/classes*.dex && echo "  ok: entry class $ENTRY present in dex" \
             || { echo "  MISSING: $ENTRY is not in any classes.dex"; exit 1; }
-          # And the legacy entry points must be gone: a module is legacy or modern, never both.
-          grep -q "assets/xposed_init" <<< "$LIST" \
-            && { echo "  STALE: assets/xposed_init is still packaged"; exit 1; } \
-            || echo "  ok: no legacy assets/xposed_init"
 
-          echo "APK verification passed."
+          echo "Xposed APK verified."
+
+      - name: Verify the Zygisk module zip
+        run: |
+          set -euo pipefail
+          ZIP=$(ls zygisk/zygote/build/outputs/magisk/release/*.zip)
+          LIST=$(unzip -l "$ZIP")
+          for f in module.prop classes.dex customize.sh service.sh post-fs-data.sh \
+                   action.sh describe.sh zygisk/arm64-v8a.so zygisk/armeabi-v7a.so; do
+            grep -q " $f\$" <<< "$LIST" && echo "  ok: $f" \
+              || { echo "  MISSING: $f"; echo "$LIST"; exit 1; }
+          done
+          # action.sh is what puts the ACTION button on the root manager's module card.
+          unzip -p "$ZIP" module.prop | grep -qE '^id=duckusb_zygisk$' \
+            && echo "  ok: module id" || { echo "  bad module id"; exit 1; }
+          echo "Zygisk zip verified: $ZIP"
+
+      - name: Stage artifacts
+        run: |
+          set -euo pipefail
+          cp app/build/outputs/apk/release/app-release.apk ./DuckUSB-xposed.apk
+          cp zygisk/app/build/outputs/apk/release/app-release.apk ./DuckUSB-zygisk-manager.apk
+          cp zygisk/zygote/build/outputs/magisk/release/*.zip ./
+          ls -l ./*.apk ./*.zip
 
       - name: Build update.json
-        # Only tags publish, so only tags need it. Generated HERE rather than in the release
-        # job because that job has no checkout — it only downloads the artifact.
-        #
-        # minApiVersion is the load-bearing field, and it is read out of the built APK rather
-        # than hardcoded so the JSON cannot drift from what shipped. A modern module is not
-        # merely refused by an older framework, it is never listed at all, so the in-app check
-        # must be able to hold those users back instead of offering a build that does nothing.
+        # Only tags publish, so only tags need it. minApiVersion is read out of the built APK
+        # rather than hardcoded, so the JSON cannot drift from what shipped.
         if: startsWith(github.ref, 'refs/tags/v')
         run: |
           set -euo pipefail
           TAG="${GITHUB_REF_NAME}"
-          APK=app/build/outputs/apk/release/app-release.apk
+          APK=DuckUSB-xposed.apk
           NAME="DuckUSB-${TAG}.apk"
           MIN_API=$(unzip -p "$APK" META-INF/xposed/module.prop | sed -n 's/^minApiVersion=//p' | tr -d '\r')
           [ -n "$MIN_API" ] || { echo "module.prop declares no minApiVersion"; exit 1; }
@@ -181,49 +171,37 @@ jobs:
             }
           }
           JSON
-          cat update.json
-          python3 -c "import json;json.load(open('update.json'))" && echo "update.json is valid JSON"
+          python3 -c "import json;json.load(open('update.json'))" && cat update.json
 
-      - name: Stage release files
-        # upload-artifact roots the archive at the common ancestor of everything it is given.
-        # Mixing app/build/outputs/... with a workspace-root update.json therefore buried the
-        # APK under app/build/outputs/apk/release/, and the release job does a flat
-        # `mv app-release.apk` — which only breaks on a tag build, i.e. exactly when it ships.
-        # Stage both files at the root so the artifact stays flat.
-        run: cp app/build/outputs/apk/release/app-release.apk ./app-release.apk
-
-      - name: Upload APK
+      - name: Upload artifacts
         uses: actions/upload-artifact@v7
         with:
           name: DuckUSB-release
           path: |
-            app-release.apk
+            DuckUSB-xposed.apk
+            DuckUSB-zygisk-manager.apk
+            DuckUSB-Zygisk-*.zip
             update.json
           if-no-files-found: error
 
   release:
-    # Publishes only for a v* tag. Reuses the artifact the build job already verified
-    # rather than rebuilding, so the bytes that were checked are the bytes that ship.
+    # Publishes only for a v* tag, reusing the artifact the build job already verified.
     if: startsWith(github.ref, 'refs/tags/v')
     needs: build
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
-      - name: Download verified APK
+      - name: Download verified artifacts
         uses: actions/download-artifact@v8
         with:
           name: DuckUSB-release
 
       - name: Name the APK after the tag
-        # Every build so far has been called app-release.apk and carried whatever
-        # versionName happened to be in the gradle file, which made three different
-        # 1.3.1 APKs indistinguishable. The filename now states which build it is.
         run: |
           set -euo pipefail
-          TAG="${GITHUB_REF_NAME}"
-          mv app-release.apk "DuckUSB-${TAG}.apk"
-          ls -l "DuckUSB-${TAG}.apk"
+          mv DuckUSB-xposed.apk "DuckUSB-${GITHUB_REF_NAME}.apk"
+          ls -l
 
       - name: Publish release
         env:
@@ -231,7 +209,8 @@ jobs:
         run: |
           set -euo pipefail
           TAG="${GITHUB_REF_NAME}"
-          gh release create "$TAG" "DuckUSB-${TAG}.apk" update.json \
+          gh release create "$TAG" \
+            "DuckUSB-${TAG}.apk" DuckUSB-zygisk-manager.apk DuckUSB-Zygisk-*.zip update.json \
             --repo "$GITHUB_REPOSITORY" \
             --title "$TAG" \
             --generate-notes

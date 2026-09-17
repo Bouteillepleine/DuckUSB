@@ -13,13 +13,13 @@ val moduleVersionCode: Int by rootProject.extra
 
 android {
     namespace = "$appPackageName.zygote"
-    compileSdk = 37
+    compileSdk = 36
     ndkVersion = (findProperty("duckusbNdk") as String?) ?: "29.0.14206865"
 
     defaultConfig {
         applicationId = namespace
         minSdk = 29
-        targetSdk = 37
+        targetSdk = 36
         versionCode = moduleVersionCode
         versionName = moduleVersionName
 

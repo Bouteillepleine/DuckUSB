@@ -7,7 +7,7 @@ val appPackageName: String by rootProject.extra
 
 android {
     namespace = "$appPackageName.common"
-    compileSdk = 37
+    compileSdk = 36
 
     defaultConfig {
         minSdk = 26

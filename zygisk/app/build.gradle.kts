@@ -22,7 +22,7 @@ val hasSigning = signStoreFile != null && signStorePassword != null && signKeyAl
 
 android {
     namespace = "$appPackageName.zygisk"
-    compileSdk = 37
+    compileSdk = 36
 
     defaultConfig {
         applicationId = "$appPackageName.zygisk"

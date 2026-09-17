@@ -5,7 +5,7 @@ plugins {
 
 android {
     namespace = "com.strawing.duckprobe"
-    compileSdk = 37
+    compileSdk = 36
 
     defaultConfig {
         applicationId = "com.strawing.duckprobe"
