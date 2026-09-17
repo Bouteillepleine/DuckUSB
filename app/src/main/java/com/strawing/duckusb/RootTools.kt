@@ -38,12 +38,15 @@ object RootTools {
         val script = buildString {
             append("[ -f $BOOT_SCRIPT ] && echo 'mask=1' || echo 'mask=0'\n")
             append("echo '#settings'\n")
-            append("settings list global 2>/dev/null | grep -E '^(")
+            append("PATTERN='^(")
             append(settingKeys.joinToString("|"))
             append(")='\n")
+            append("cmd settings list global 2>/dev/null | grep -E \"\$PATTERN\" || ")
+            append("settings list global 2>/dev/null | grep -E \"\$PATTERN\"\n")
             append("echo '#props'\n")
             for (key in propKeys) append("echo '$key='\$(getprop $key)\n")
         }
+        val rooted = try { Shell.getShell().isRoot } catch (_: Throwable) { false }
         val result = exec(script)
         if (!result.isSuccess && result.out.isEmpty()) {
             return Snapshot(false, emptyMap(), emptyMap(), false)
@@ -64,7 +67,7 @@ object RootTools {
                 else -> if (line == "mask=1") masked = true
             }
         }
-        return Snapshot(true, settings, props, masked)
+        return Snapshot(rooted, settings, props, masked)
     }
 
     /**

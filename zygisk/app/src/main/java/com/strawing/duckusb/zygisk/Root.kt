@@ -121,14 +121,17 @@ object Root {
                 append("grep -m1 '^name=' $dir/module.prop 2>/dev/null | sed 's/^name=/zygisk=/'\n")
             }
             append("echo '#settings'\n")
-            append("settings list global 2>/dev/null | grep -E '^(")
+            append("PATTERN='^(")
             append(settingKeys.joinToString("|"))
             append(")='\n")
+            append("cmd settings list global 2>/dev/null | grep -E \"\$PATTERN\" || ")
+            append("settings list global 2>/dev/null | grep -E \"\$PATTERN\"\n")
             append("echo '#props'\n")
             for (key in propKeys) append("echo '$key='\$(getprop $key)\n")
             append("echo '#config'\n")
             append("cat ${Config.CONFIG_FILE} 2>/dev/null\n")
         }
+        val rooted = try { Shell.getShell().isRoot } catch (_: Throwable) { false }
         val result = exec(script)
         if (!result.isSuccess && result.out.isEmpty()) {
             return Snapshot(false, false, false, null, null, "unknown", emptyMap(), emptyMap())
@@ -170,7 +173,7 @@ object Root {
 
         val config = configText.toString().takeIf { it.isNotBlank() }?.let { DuckConfig.parse(it) }
         return Snapshot(
-            rootAvailable = true,
+            rootAvailable = rooted,
             moduleInstalled = installed,
             hooksKilled = installed && killed,
             config = config,
