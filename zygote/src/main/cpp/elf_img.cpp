@@ -10,6 +10,11 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <vector>
+
+extern "C" {
+#include <xz.h>
+}
 
 #include "Logger.h"
 
@@ -17,6 +22,39 @@ using Elf_Ehdr = ElfW(Ehdr);
 using Elf_Shdr = ElfW(Shdr);
 using Elf_Sym = ElfW(Sym);
 using Elf_Phdr = ElfW(Phdr);
+
+static std::vector<uint8_t> inflate(const uint8_t *in, size_t in_size) {
+    static bool crc_ready = false;
+    if (!crc_ready) {
+        xz_crc32_init();
+        xz_crc64_init();
+        crc_ready = true;
+    }
+    std::vector<uint8_t> out(4u << 20);
+    for (int attempt = 0; attempt < 5; attempt++) {
+        xz_dec *dec = xz_dec_init(XZ_SINGLE, 0);
+        if (dec == nullptr) return {};
+        xz_buf buf{};
+        buf.in = in;
+        buf.in_pos = 0;
+        buf.in_size = in_size;
+        buf.out = out.data();
+        buf.out_pos = 0;
+        buf.out_size = out.size();
+        xz_ret ret = xz_dec_run(dec, &buf);
+        xz_dec_end(dec);
+        if (ret == XZ_STREAM_END) {
+            out.resize(buf.out_pos);
+            return out;
+        }
+        if (ret != XZ_BUF_ERROR && ret != XZ_MEMLIMIT_ERROR) {
+            LOGD("gnu_debugdata: xz failed with %d", ret);
+            return {};
+        }
+        out.assign(out.size() * 4, 0);
+    }
+    return {};
+}
 
 ElfImg::ElfImg(std::string_view base_name) : name_(base_name) {
     FILE *maps = fopen("/proc/self/maps", "r");
@@ -64,13 +102,38 @@ ElfImg::ElfImg(std::string_view base_name) : name_(base_name) {
     parse();
 }
 
+void ElfImg::collect(const char *image, bool keep_strings) {
+    auto *header = reinterpret_cast<const Elf_Ehdr *>(image);
+    if (memcmp(header->e_ident, ELFMAG, SELFMAG) != 0) return;
+
+    auto *sections = reinterpret_cast<const Elf_Shdr *>(image + header->e_shoff);
+    for (int i = 0; i < header->e_shnum; i++) {
+        const auto &section = sections[i];
+        if (section.sh_type != SHT_SYMTAB && section.sh_type != SHT_DYNSYM) continue;
+        if (section.sh_entsize == 0) continue;
+
+        auto *symbols = reinterpret_cast<const Elf_Sym *>(image + section.sh_offset);
+        auto count = section.sh_size / section.sh_entsize;
+        auto *strings = image + sections[section.sh_link].sh_offset;
+
+        for (size_t s = 0; s < count; s++) {
+            const auto &symbol = symbols[s];
+            if (symbol.st_name == 0 || symbol.st_value == 0) continue;
+            const char *raw = strings + symbol.st_name;
+            if (keep_strings) {
+                owned_.emplace_back(raw);
+                symbols_.emplace(owned_.back(), static_cast<uintptr_t>(symbol.st_value));
+            } else {
+                symbols_.emplace(std::string_view(raw), static_cast<uintptr_t>(symbol.st_value));
+            }
+        }
+    }
+}
+
 void ElfImg::parse() {
     auto *header = reinterpret_cast<Elf_Ehdr *>(elf_);
     if (memcmp(header->e_ident, ELFMAG, SELFMAG) != 0) return;
     header_ = header;
-
-    auto *sections = reinterpret_cast<Elf_Shdr *>(elf_ + header->e_shoff);
-    auto *section_names = elf_ + sections[header->e_shstrndx].sh_offset;
 
     for (int i = 0; i < header->e_phnum; i++) {
         auto *program = reinterpret_cast<Elf_Phdr *>(
@@ -84,24 +147,23 @@ void ElfImg::parse() {
         bias_ = reinterpret_cast<uintptr_t>(base_);
     }
 
+    collect(elf_, false);
+
+    auto *sections = reinterpret_cast<Elf_Shdr *>(elf_ + header->e_shoff);
+    auto *section_names = elf_ + sections[header->e_shstrndx].sh_offset;
     for (int i = 0; i < header->e_shnum; i++) {
         auto &section = sections[i];
-        if (section.sh_type != SHT_SYMTAB && section.sh_type != SHT_DYNSYM) continue;
-        if (section.sh_entsize == 0) continue;
-
-        auto *symbols = reinterpret_cast<Elf_Sym *>(elf_ + section.sh_offset);
-        auto count = section.sh_size / section.sh_entsize;
-        auto *strings = elf_ + sections[section.sh_link].sh_offset;
-
-        for (size_t s = 0; s < count; s++) {
-            auto &symbol = symbols[s];
-            if (symbol.st_name == 0 || symbol.st_value == 0) continue;
-            std::string_view name(strings + symbol.st_name);
-            symbols_.emplace(name, static_cast<uintptr_t>(symbol.st_value));
-        }
+        if (strcmp(section_names + section.sh_name, ".gnu_debugdata") != 0) continue;
+        auto data = inflate(reinterpret_cast<const uint8_t *>(elf_ + section.sh_offset),
+                            section.sh_size);
+        if (data.empty()) break;
+        debug_ = std::move(data);
+        collect(reinterpret_cast<const char *>(debug_.data()), true);
+        break;
     }
-    LOGD("ElfImg: %s parsed, %zu symbols, bias %p",
-         name_.c_str(), symbols_.size(), reinterpret_cast<void *>(bias_));
+
+    LOGD("ElfImg: %s parsed, %zu symbols, debugdata %zu bytes, bias %p",
+         name_.c_str(), symbols_.size(), debug_.size(), reinterpret_cast<void *>(bias_));
 }
 
 void *ElfImg::symbol(std::string_view name) const {
