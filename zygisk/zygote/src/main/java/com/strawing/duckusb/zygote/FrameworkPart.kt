@@ -12,7 +12,7 @@ import com.strawing.duckusb.common.Config
 import com.strawing.duckusb.zygote.hook.Frame
 import com.strawing.duckusb.zygote.hook.XHook
 import com.strawing.duckusb.zygote.service.DuckService
-import com.strawing.duckusb.zygote.util.CursorSpoof
+import com.strawing.duckusb.common.CursorSpoof
 import com.strawing.duckusb.zygote.util.Logx
 import com.strawing.duckusb.zygote.util.ModuleConfig
 

@@ -1,4 +1,4 @@
-package com.strawing.duckusb.zygote.util
+package com.strawing.duckusb.common
 
 import android.database.Cursor
 import android.database.MatrixCursor

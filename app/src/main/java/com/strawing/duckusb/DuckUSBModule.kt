@@ -4,10 +4,13 @@ import android.app.Notification
 import android.content.Context
 import android.content.SharedPreferences
 import android.content.res.Resources
+import android.database.Cursor
+import android.net.Uri
 import android.os.Binder
 import android.os.Bundle
 import android.os.SystemClock
 import android.util.Log
+import com.strawing.duckusb.common.CursorSpoof
 import com.strawing.duckusb.service.Bridge
 import com.strawing.duckusb.service.DuckService
 import io.github.libxposed.api.XposedInterface
@@ -141,9 +144,7 @@ class DuckUSBModule : XposedModule() {
      * Android 16) hooking ContentProvider$Transport.call in system_server bootloops the
      * device. The per-app client hook is the safe default.
      */
-    private fun frameworkModeOn() = prefs.getBoolean(Config.KEY_FRAMEWORK_MODE, false)
 
-    private fun clientFallbackOn() = prefs.getBoolean(Config.KEY_CLIENT_FALLBACK, true)
 
     private fun logI(msg: String) = log(Log.INFO, TAG, msg)
 
@@ -199,7 +200,7 @@ class DuckUSBModule : XposedModule() {
         // A0) Framework mode (default off): one server-side hook covers the Settings spoof for
         //     EVERY app — no per-app scope. Gated per-caller by UID so shell/system still see
         //     the truth.
-        if (frameworkModeOn()) installFrameworkSettingsSpoof(cl)
+        installFrameworkSettingsSpoof(cl)
     }
 
     /**
@@ -222,88 +223,19 @@ class DuckUSBModule : XposedModule() {
         //    surface. (system_server is handled in onSystemServerStarting.)
         if (pkg == "com.android.systemui" && hideNotifOn()) installNotificationSuppressor(cl)
 
-        // A) Settings spoof (per-app, client side) — the default layer, off only when framework
-        //    mode is on. Never in the core OS packages.
-        //
-        // Guard on UID, not just package name. The property spoof claims sys.usb.state=mtp and
-        // init.svc.adbd=stopped — the USB stack's actual control surface, not detection
-        // cosmetics — so reaching a system process with it kills the gadget outright (no MTP
-        // *and* no adb, charge-only). Any uid < 10000 is OS, never spoof it. Three independent
-        // guards, because each alone has a proven gap:
-        //   uid       — catches every system-uid injection
-        //   process   — catches OEM keyguard plugins riding com.android.systemui at uid 10178
-        //   package   — the original list, kept for the plain per-app cases
-        val isSystemProcess = myUid % 100000 < FIRST_APP_UID
-        val inCoreProcess = processName.ifEmpty { pkg } in SKIP_SPOOF_PROCESSES
-        // ...and never in DuckUSB itself. The framework loads a module into its own process
-        // whether or not you scope it, so without this the UI spoofs itself: the readings card,
-        // which exists to report the REAL device state, reads its own lie. The native half is
-        // worse than dishonest — the libc inline hook is what SIGILLs the UI on some ROMs
-        // (issue #2).
-        val isSelf = pkg == Config.PKG || processName.substringBefore(':') == Config.PKG
-        if (pkg !in SKIP_SPOOF_PACKAGES && !isSystemProcess && !inCoreProcess && !isSelf) {
-            if (clientFallbackOn()) installSettingsSpoof(cl)
-            // A2) Property spoof — same scope. Closes the gap where a detector reads the raw
-            //     sys.usb.* / init.svc.adbd props instead of the Settings provider.
-            // Never spoof properties to the OS's own file-transfer plumbing, even if the user
-            // scopes com.android.mtp directly: it runs at an app uid, so the guard above cannot
-            // catch it.
-            if (pkg in Config.SPARE_PACKAGES) {
-                if (verboseOn()) logI("property spoof SPARED for $pkg (OS file-transfer plumbing)")
-            } else {
-                installSystemPropertiesSpoof(cl)
-                installNativePropSpoof()
-            }
-        }
     }
 
     // ============================ A) SETTINGS SPOOF ============================
 
-    private fun installSettingsSpoof(cl: ClassLoader) {
-        for (clazz in arrayOf("android.provider.Settings\$Global", "android.provider.Settings\$Secure")) {
-            val settings = findClass(clazz, cl) ?: continue
-            for (getter in GETTERS) hookAll(settings, getter, settingsHooker)
-        }
-    }
-
-    /**
-     * One interceptor replaces the old before/after pair: returning a value without calling
-     * [XposedInterface.Chain.proceed] is what `param.result = …` in `beforeHookedMethod` meant.
-     */
-    private val settingsHooker = XposedInterface.Hooker { chain ->
-        // Cheap key check FIRST — this runs on every Settings getter, so do the work only for
-        // the few keys we actually spoof.
-        val key = chain.args.firstOrNull { it is String } as? String
-        if (key == null || key !in SPOOF_KEYS || pausedOn() || !spoofOn()) {
-            chain.proceed()
-        } else {
-            when ((chain.executable as? Method)?.returnType) {
-                java.lang.Long.TYPE -> 0L
-                java.lang.Float.TYPE -> 0f
-                java.lang.Integer.TYPE -> 0
-                String::class.java -> "0"
-                else -> 0
-            }
-        }
-    }
-
-    // ================= A0) FRAMEWORK-MODE SETTINGS SPOOF (system_server) =================
+    // ================= FRAMEWORK-MODE SETTINGS SPOOF (system_server) =================
 
     /** The system_server-side service; null until SettingsProvider attaches. */
     @Volatile
     private var service: DuckService? = null
 
-    /** One-shot guard so we hook SettingsProvider.call only once. */
+    /** One-shot guard so we hook the provider only once. */
     private var settingsCallHooked = false
 
-    /**
-     * Server-side settings spoof, done the SAFE way (AdbHide-style): hook
-     * ContentProvider.attachInfo, wait for the concrete SettingsProvider to attach, then hook
-     * ONLY its call(). We deliberately do NOT hook the generic ContentProvider$Transport.call —
-     * that fires on every provider IPC in system_server on the hottest boot path and BOOTLOOPS
-     * some ROMs (verified OP15 / Android 16). Gated per-caller by UID so shell/system keep the
-     * real state and adb stays functional.
-     */
     private fun installFrameworkSettingsSpoof(cl: ClassLoader) {
         val cp = findClass("android.content.ContentProvider", cl)
         if (cp == null) {
@@ -351,7 +283,7 @@ class DuckUSBModule : XposedModule() {
         }
     }
 
-    /** Reflectively hook only SettingsProvider.call (>=3 params). One-shot. */
+    /** Reflectively hook SettingsProvider.call and .query (>=3 params). One-shot. */
     private fun hookSettingsProviderCall(spClass: Class<*>) {
         if (settingsCallHooked) return
         var count = 0
@@ -359,6 +291,9 @@ class DuckUSBModule : XposedModule() {
             try {
                 if (m.name == "call" && m.parameterTypes.size >= 3) {
                     hook(m).intercept(frameworkCallHooker)
+                    count++
+                } else if (m.name == "query" && m.parameterTypes.size >= 3) {
+                    hook(m).intercept(frameworkQueryHooker)
                     count++
                 }
             } catch (_: Throwable) {}
@@ -396,6 +331,36 @@ class DuckUSBModule : XposedModule() {
             } catch (_: Throwable) {}
             result
         }
+    }
+
+    /**
+     * The cursor path. A detector that queries the settings table directly instead of calling
+     * the getter would otherwise read the truth and catch the lie told on the call path.
+     */
+    private val frameworkQueryHooker = XposedInterface.Hooker { chain ->
+        val uid = try { Binder.getCallingUid() } catch (_: Throwable) { null }
+        val result = chain.proceed()
+        var replaced: Any? = null
+        try {
+            if (uid != null && spoofingForCaller(uid)) {
+                val cursor = result as? Cursor
+                if (cursor != null) {
+                    val uri = chain.args.firstOrNull { it is Uri } as? Uri
+                    replaced = CursorSpoof.rewrite(cursor, uri?.lastPathSegment)
+                    if (replaced != null) service?.note(uid, "query")
+                }
+            }
+        } catch (_: Throwable) {}
+        replaced ?: result
+    }
+
+    /** Shared gate for both framework paths: real apps only, never the OS, never our own UI. */
+    private fun spoofingForCaller(uid: Int): Boolean {
+        if (uid % 100000 < FIRST_APP_UID) return false
+        service?.callerAppId?.let { if (it >= 0 && uid % 100000 == it) return false }
+        if (service?.isSpared(uid) == true) return false
+        if (service?.paused ?: pausedOn()) return false
+        return service?.spoofSettings ?: spoofOn()
     }
 
     /** The "after" half of the framework call hook: rewrite the value the provider returned. */
@@ -437,52 +402,6 @@ class DuckUSBModule : XposedModule() {
             // Make the client NameValueCache treat this as uncacheable (-1) so our hook runs on
             // every read instead of a stale real value being served from cache.
             bundle.putInt(CALL_GENERATION_INDEX, -1)
-        }
-    }
-
-    // ===================== A2) PROPERTY SPOOF (Java layer) =====================
-
-    /**
-     * Hook android.os.SystemProperties.native_get* so apps using SystemProperties.get()/
-     * getInt()/getBoolean() see our overrides. Checked live against the toggle.
-     */
-    private fun installSystemPropertiesSpoof(cl: ClassLoader) {
-        val sp = findClass("android.os.SystemProperties", cl) ?: return
-        for (m in arrayOf("native_get", "native_get_int", "native_get_long", "native_get_boolean")) {
-            hookAll(sp, m, systemPropertiesHooker)
-        }
-    }
-
-    private val systemPropertiesHooker = XposedInterface.Hooker { chain ->
-        // Cheap key check FIRST — SystemProperties.get() is extremely hot.
-        val key = chain.args.firstOrNull() as? String
-        val value = if (key == null) null else Config.PROP_OVERRIDES[key]
-        // native_get returns String; the int/long/boolean variants need a parseable value.
-        // Our USB props ("mtp") aren't numeric, so only substitute when it fits the type.
-        val spoofed: Any? = if (value == null || pausedOn()) null else
-            when ((chain.executable as? Method)?.returnType) {
-                String::class.java -> value
-                java.lang.Integer.TYPE -> value.toIntOrNull()
-                java.lang.Long.TYPE -> value.toLongOrNull()
-                java.lang.Boolean.TYPE -> when (value) { "1", "true" -> true; "0", "false" -> false; else -> null }
-                else -> null
-            }
-        spoofed ?: chain.proceed()
-    }
-
-    // ===================== A2) PROPERTY SPOOF (native libc layer) =====================
-
-    /**
-     * Install the libc __system_property_get / __system_property_find hooks (libduckusb.so).
-     * Installed once per process; an empty map (spoof off) makes the hooks pass through.
-     */
-    private fun installNativePropSpoof() {
-        try {
-            // The native hook installs once per process and cannot be re-gated live, so pause
-            // is applied at load: an empty map makes the libc hooks pass through.
-            NativeProps.install(if (pausedOn()) emptyMap() else Config.PROP_OVERRIDES)
-        } catch (t: Throwable) {
-            logE("native prop hook install failed", t)
         }
     }
 

@@ -27,9 +27,6 @@ android {
 
     // IDuckService.aidl — the system_server <-> UI channel.
     buildFeatures { aidl = true }
-    // CI pins 27.2.12479018 (installed via sdkmanager). Local builds can override with
-    // -PduckusbNdk=<installed-version> without touching the committed CI value.
-    ndkVersion = (findProperty("duckusbNdk") as String?) ?: "27.2.12479018"
 
     defaultConfig {
         applicationId = "com.strawing.duckusb"
@@ -38,15 +35,6 @@ android {
         versionCode = 10
         versionName = "1.4.0"
         vectorDrawables { useSupportLibrary = true }
-        ndk {
-            abiFilters += listOf("armeabi-v7a", "arm64-v8a", "x86", "x86_64")
-        }
-    }
-
-    externalNativeBuild {
-        ndkBuild {
-            path = file("src/main/jni/Android.mk")
-        }
     }
 
     signingConfigs {
@@ -106,4 +94,6 @@ dependencies {
     // scope and share preferences with the hook. This is what makes the scope reporting in
     // MainActivity honest — under the legacy API the UI could not see its own scope at all.
     implementation("io.github.libxposed:service:101.0.0")
+    implementation(projects.common)
+    implementation(projects.ui)
 }
