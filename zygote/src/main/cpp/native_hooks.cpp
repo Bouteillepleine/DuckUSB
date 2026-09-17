@@ -8,7 +8,7 @@
 #include <unordered_map>
 #include <vector>
 
-#include "shadowhook.h"
+#include <dobby.h>
 #include "Logger.h"
 
 using PropMap = std::unordered_map<std::string, std::string>;
@@ -101,24 +101,18 @@ JNIEXPORT jboolean JNICALL
 Java_com_strawing_duckusb_zygote_NativeProps_installHooks(JNIEnv *, jobject) {
     if (gHooksInstalled.load(std::memory_order_acquire)) return JNI_TRUE;
 
-    if (shadowhook_init(SHADOWHOOK_MODE_UNIQUE, false) != 0) {
-        LOGD("installHooks: shadowhook_init failed errno=%d", shadowhook_get_errno());
-        return JNI_FALSE;
-    }
+    int rc_get = DobbyHook((void *) __system_property_get,
+                           (dobby_dummy_func_t) hooked_system_property_get,
+                           (dobby_dummy_func_t *) &orig_system_property_get);
+    int rc_cb = DobbyHook((void *) __system_property_read_callback,
+                          (dobby_dummy_func_t) hooked_system_property_read_callback,
+                          (dobby_dummy_func_t *) &orig_system_property_read_callback);
+    int rc_read = DobbyHook((void *) __system_property_read,
+                            (dobby_dummy_func_t) hooked_system_property_read,
+                            (dobby_dummy_func_t *) &orig_system_property_read);
 
-    void *s_get = shadowhook_hook_sym_name(
-            "libc.so", "__system_property_get",
-            (void *) hooked_system_property_get, (void **) &orig_system_property_get);
-    void *s_cb = shadowhook_hook_sym_name(
-            "libc.so", "__system_property_read_callback",
-            (void *) hooked_system_property_read_callback,
-            (void **) &orig_system_property_read_callback);
-    void *s_read = shadowhook_hook_sym_name(
-            "libc.so", "__system_property_read",
-            (void *) hooked_system_property_read, (void **) &orig_system_property_read);
-
-    bool ok = s_get != nullptr && s_cb != nullptr;
-    LOGD("installHooks: get=%p read_callback=%p read=%p", s_get, s_cb, s_read);
+    bool ok = rc_get == 0 && rc_cb == 0;
+    LOGD("installHooks: get=%d read_callback=%d read=%d", rc_get, rc_cb, rc_read);
     gHooksInstalled.store(ok, std::memory_order_release);
     return ok ? JNI_TRUE : JNI_FALSE;
 }

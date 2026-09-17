@@ -1,14 +1,32 @@
-cmake_minimum_required(VERSION 3.22.1)
-project(duckusb)
+cmake_minimum_required(VERSION 3.28)
+project(duckusb CXX)
 
-set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-find_package(shadowhook REQUIRED CONFIG)
+get_filename_component(REPO_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../../../.." ABSOLUTE)
 
-add_library(duckusb SHARED native_hooks.cpp)
+set(LSPLANT_BUILD_SHARED OFF CACHE BOOL "" FORCE)
+set(LSPLANT_STANDALONE OFF CACHE BOOL "" FORCE)
+add_subdirectory(${REPO_ROOT}/external/LSPlant/lsplant/src/main/jni lsplant)
 
-target_compile_options(duckusb PRIVATE -Wall -Wextra -fvisibility=hidden -ffunction-sections -fdata-sections)
-target_link_options(duckusb PRIVATE -Wl,--gc-sections -Wl,--exclude-libs,ALL)
+set(DOBBY_GENERATE_SHARED OFF CACHE BOOL "" FORCE)
+set(BUILD_EXAMPLE OFF CACHE BOOL "" FORCE)
+set(BUILD_TEST OFF CACHE BOOL "" FORCE)
+set(DOBBY_DEBUG OFF CACHE BOOL "" FORCE)
+set(Plugin.SymbolResolver ON CACHE BOOL "" FORCE)
+add_subdirectory(${REPO_ROOT}/external/Dobby dobby)
 
-target_link_libraries(duckusb log shadowhook::shadowhook)
+add_library(duckusb SHARED
+        native_hooks.cpp
+        lsplant_glue.cpp
+        elf_img.cpp)
+
+target_include_directories(duckusb PRIVATE
+        ${REPO_ROOT}/external/Dobby/include
+        ${REPO_ROOT}/external/LSPlant/lsplant/src/main/jni/include)
+
+target_compile_options(duckusb PRIVATE -Wall -fvisibility=hidden)
+target_link_options(duckusb PRIVATE -Wl,--exclude-libs,ALL)
+
+target_link_libraries(duckusb log lsplant_static dobby)

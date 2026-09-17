@@ -1,5 +1,4 @@
 import com.v7878.zygisk.gradle.ZygoteLoader
-import kotlin.io.path.Path
 
 plugins {
     alias(libs.plugins.agp.app)
@@ -15,7 +14,7 @@ val moduleVersionCode: Int by rootProject.extra
 android {
     namespace = "$appPackageName.zygote"
     compileSdk = 37
-    ndkVersion = (findProperty("duckusbNdk") as String?) ?: "27.2.12479018"
+    ndkVersion = (findProperty("duckusbNdk") as String?) ?: "29.0.14206865"
 
     defaultConfig {
         applicationId = namespace
@@ -32,21 +31,12 @@ android {
     externalNativeBuild {
         cmake {
             path = file("src/main/cpp/CMakeLists.txt")
-            version = "3.22.1"
+            version = "3.31.6"
         }
     }
 
     buildFeatures {
-        prefab = true
         buildConfig = true
-    }
-
-    sourceSets {
-        getByName("main") {
-            java {
-                srcDirs(Path(rootDir.path, "external", "AndroidVMTools", "src", "main", "java"))
-            }
-        }
     }
 
     buildTypes {
@@ -90,10 +80,4 @@ dependencies {
     implementation(projects.common)
     implementation(libs.androidx.annotation.jvm)
     implementation(libs.r8.annotations)
-    implementation(libs.shadowhook)
-
-    api(androidvmtools.panama.core)
-    api(androidvmtools.panama.unsafe)
-    api(androidvmtools.panama.llvm)
-    implementation(androidvmtools.sun.cleaner)
 }

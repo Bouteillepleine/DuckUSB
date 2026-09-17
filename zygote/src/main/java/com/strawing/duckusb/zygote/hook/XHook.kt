@@ -1,20 +1,14 @@
 package com.strawing.duckusb.zygote.hook
 
 import com.strawing.duckusb.zygote.util.Logx
-import com.v7878.unsafe.invoke.EmulatedStackFrame
-import com.v7878.unsafe.invoke.EmulatedStackFrame.RETURN_VALUE_IDX
-import com.v7878.unsafe.invoke.Transformers
-import com.v7878.unsafe.Reflection
-import com.v7878.vmtools.HookTransformer
-import com.v7878.vmtools.Hooks
-import java.lang.invoke.MethodHandle
 import java.lang.reflect.Executable
+import java.lang.reflect.Method
 import java.lang.reflect.Modifier
 
 class Frame(
-    private val original: MethodHandle,
-    private val frame: EmulatedStackFrame,
     val member: Executable,
+    private val hooker: Hooker,
+    private val raw: Array<Any?>,
 ) {
     private val static = Modifier.isStatic(member.modifiers)
     private val offset = if (static) 0 else 1
@@ -22,79 +16,90 @@ class Frame(
     var proceeded = false
         private set
 
+    var result: Any? = null
+
     val thisObject: Any?
-        get() = if (static) null else raw(0)
+        get() = if (static) null else raw.getOrNull(0)
 
     val argCount: Int
-        get() = frame.type().parameterCount() - offset
+        get() = raw.size - offset
 
     val returnType: Class<*>
-        get() = frame.type().returnType()
+        get() = (member as? Method)?.returnType ?: Void.TYPE
 
     fun arg(index: Int): Any? =
-        if (index < 0 || index >= argCount) null else raw(offset + index)
+        if (index < 0 || index >= argCount) null else raw[offset + index]
 
     val args: List<Any?>
         get() = (0 until argCount).map { arg(it) }
 
     fun proceed(): Any? {
-        Transformers.invokeExact(original, frame)
+        val backup = hooker.backup ?: return null
+        val params = if (static) raw else raw.copyOfRange(1, raw.size)
+        result = backup.invoke(thisObject, *params)
         proceeded = true
         return result
     }
+}
 
-    var result: Any?
-        get() = if (returnType == Void.TYPE) null else frame.accessor().getValue(RETURN_VALUE_IDX)
-        set(value) {
-            if (returnType != Void.TYPE) frame.accessor().setValue(RETURN_VALUE_IDX, value)
-        }
+class Hooker(private val member: Executable, private val body: (Frame) -> Unit) {
 
-    private fun raw(index: Int): Any? {
-        val a = frame.accessor()
-        return when (a.getArgumentShorty(index)) {
-            'L' -> a.getReference<Any?>(index)
-            'Z' -> a.getBoolean(index)
-            'B' -> a.getByte(index)
-            'C' -> a.getChar(index)
-            'S' -> a.getShort(index)
-            'I' -> a.getInt(index)
-            'J' -> a.getLong(index)
-            'F' -> a.getFloat(index)
-            'D' -> a.getDouble(index)
-            else -> null
+    @Volatile
+    @JvmField
+    var backup: Method? = null
+
+    fun callback(args: Array<Any?>): Any? {
+        val frame = Frame(member, this, args)
+        try {
+            body(frame)
+        } catch (t: Throwable) {
+            Logx.e("hook body failed on ${member.name}", t)
+            if (!frame.proceeded) return frame.proceed()
         }
+        return frame.result
     }
 }
 
 object XHook {
 
-    fun hook(target: Executable, body: (Frame) -> Unit): Boolean {
-        return try {
-            runCatching { Hooks.deoptimize(target) }
-                .onFailure { Logx.e("pre-hook deoptimize failed on ${target.name}", it) }
-            Hooks.hook(
-                target,
-                Hooks.EntryPointType.CURRENT,
-                HookTransformer { original, esf ->
-                    val f = Frame(original, esf, target)
-                    try {
-                        body(f)
-                    } catch (t: Throwable) {
-                        Logx.e("hook body failed on ${target.name}", t)
-                        if (!f.proceeded) f.proceed()
-                    }
-                },
-                Hooks.EntryPointType.CURRENT,
-            )
-            true
+    @Volatile
+    private var ready = false
+
+    private val callbackMethod: Method by lazy {
+        Hooker::class.java.getDeclaredMethod("callback", Array<Any?>::class.java)
+            .apply { isAccessible = true }
+    }
+
+    fun prepare(): Boolean {
+        if (ready) return true
+        ready = try {
+            Native.initHooking()
         } catch (t: Throwable) {
-            Logx.e("hook install failed on ${target.declaringClass.name}.${target.name}", t)
+            Logx.e("native hooking unavailable", t)
+            false
+        }
+        Logx.i("lsplant init: $ready")
+        return ready
+    }
+
+    fun hook(target: Executable, body: (Frame) -> Unit): Boolean {
+        if (!prepare()) return false
+        return try {
+            val hooker = Hooker(target, body)
+            val backup = Native.hookMethod(target, hooker, callbackMethod)
+            if (backup == null) {
+                Logx.e("hook refused on ${target.declaringClass.name}.${target.name}")
+                false
+            } else {
+                backup.isAccessible = true
+                hooker.backup = backup
+                true
+            }
+        } catch (t: Throwable) {
+            Logx.e("hook failed on ${target.declaringClass.name}.${target.name}", t)
             false
         }
     }
-
-    fun methodsOf(clazz: Class<*>): Array<out java.lang.reflect.Method> =
-        runCatching { Reflection.getDeclaredMethods(clazz) }.getOrElse { clazz.declaredMethods }
 
     fun hookAll(clazz: Class<*>, name: String, minParams: Int = 0, body: (Frame) -> Unit): Int {
         var count = 0
@@ -106,19 +111,8 @@ object XHook {
         return count
     }
 
-    fun deoptimizeAll(clazz: Class<*>, name: String): Int {
-        var count = 0
-        for (m in methodsOf(clazz)) {
-            if (m.name != name) continue
-            try {
-                Hooks.deoptimize(m)
-                count++
-            } catch (t: Throwable) {
-                Logx.e("deoptimize failed on ${clazz.name}.$name", t)
-            }
-        }
-        return count
-    }
+    fun methodsOf(clazz: Class<*>): Array<out Method> =
+        runCatching { clazz.declaredMethods }.getOrElse { emptyArray() }
 
     fun findClass(name: String, loader: ClassLoader? = null): Class<*>? = try {
         Class.forName(name, false, loader ?: XHook::class.java.classLoader)

@@ -6,18 +6,19 @@ import com.strawing.duckusb.zygote.hook.Frame
 import com.strawing.duckusb.zygote.hook.XHook
 import com.strawing.duckusb.zygote.util.Logx
 import com.strawing.duckusb.zygote.util.ModuleConfig
+import com.strawing.duckusb.zygote.util.NativeLib
 
 object AppPart {
 
-    @Volatile
-    private var pendingModuleDir: String? = null
-
-    @Volatile
-    private var settingsSpoofLive = false
+    private const val NAME_VALUE_CACHE = "android.provider.Settings\$NameValueCache"
 
     private val GETTERS = arrayOf("getInt", "getString", "getLong", "getFloat")
 
-    private const val NAME_VALUE_CACHE = "android.provider.Settings\$NameValueCache"
+    @Volatile
+    private var armed = false
+
+    @Volatile
+    private var settingsSpoofLive = false
 
     private fun active(): Boolean {
         val config = ModuleConfig.config
@@ -40,20 +41,16 @@ object AppPart {
             return
         }
 
-        pendingModuleDir = moduleDir
-        if (config.spoofProps) {
-            val ok = NativeProps.preload(moduleDir)
-            Logx.v { "native library preloaded for $packageName: $ok" }
-        }
+        armed = NativeLib.load(moduleDir)
+        Logx.v { "native library loaded for $packageName: $armed" }
     }
 
     fun postSpecialize() {
-        val dir = pendingModuleDir ?: return
-        pendingModuleDir = null
+        if (!armed) return
         val config = ModuleConfig.config
         if (config.spoofProps) {
-            val ok = NativeProps.install(dir, Config.PROP_OVERRIDES)
-            Logx.v { "property spoof installed=$ok" }
+            val ok = NativeProps.install(Config.PROP_OVERRIDES)
+            Logx.i("property spoof installed=$ok")
         }
         if (config.spoofSettings) installSettingsSpoof()
     }
@@ -99,24 +96,12 @@ object AppPart {
     }
 
     private fun announceToManager() {
-        runCatching {
-            System.setProperty(Config.LIVE_PROPERTY, Config.MODULE_VERSION)
-        }
+        runCatching { System.setProperty(Config.LIVE_PROPERTY, Config.MODULE_VERSION) }
     }
 
-    private fun selfTest(): Boolean {
-        val key = Config.SPOOF_KEYS.first()
-        if (runCatching { Settings.Global.getString(null, key) }.getOrNull() == "0") return true
-        return runCatching {
-            val cache = XHook.findClass(NAME_VALUE_CACHE) ?: return false
-            val field = com.v7878.unsafe.Reflection.getDeclaredField(
-                Class.forName("android.provider.Settings\$Global"), "sNameValueCache"
-            ).apply { isAccessible = true }
-            val instance = field.get(null) ?: return false
-            val method = XHook.methodsOf(cache).firstOrNull { it.name == "getStringForUser" }
-                ?: return false
-            method.isAccessible = true
-            method.invoke(instance, null, key, 0) == "0"
-        }.getOrDefault(false)
+    private fun selfTest(): Boolean = try {
+        Settings.Global.getString(null, Config.SPOOF_KEYS.first()) == "0"
+    } catch (_: Throwable) {
+        false
     }
 }
