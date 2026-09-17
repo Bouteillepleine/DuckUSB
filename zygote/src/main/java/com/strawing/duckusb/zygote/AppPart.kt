@@ -1,13 +1,13 @@
 package com.strawing.duckusb.zygote
 
 import android.database.Cursor
-import android.database.MatrixCursor
 import android.net.Uri
 import android.provider.Settings
 import com.strawing.duckusb.common.Config
 import com.strawing.duckusb.zygote.hook.Frame
 import com.strawing.duckusb.zygote.hook.XHook
 import com.strawing.duckusb.zygote.util.Logx
+import com.strawing.duckusb.zygote.util.CursorSpoof
 import com.strawing.duckusb.zygote.util.ModuleConfig
 import com.strawing.duckusb.zygote.util.NativeLib
 
@@ -110,50 +110,11 @@ object AppPart {
             val uri = f.args.firstOrNull { it is Uri } as? Uri ?: return
             if (uri.authority != Config.SETTINGS_AUTHORITY) return
             val cursor = f.result as? Cursor ?: return
-            val replaced = rewriteCursor(cursor, uri) ?: return
+            val replaced = CursorSpoof.rewrite(cursor, uri.lastPathSegment) ?: return
             f.result = replaced
         } catch (t: Throwable) {
             Logx.e("cursor spoof failed", t)
         }
-    }
-
-    private fun rewriteCursor(cursor: Cursor, uri: Uri): Cursor? {
-        if (cursor.count <= 0) return null
-        val columns = cursor.columnNames ?: return null
-        val nameIdx = cursor.getColumnIndex("name")
-        val valueIdx = cursor.getColumnIndex("value")
-        if (valueIdx < 0) return null
-
-        val position = cursor.position
-        val rows = ArrayList<Array<Any?>>(cursor.count)
-        var hit = false
-        cursor.moveToPosition(-1)
-        while (cursor.moveToNext()) {
-            val row = arrayOfNulls<Any?>(columns.size)
-            for (i in columns.indices) {
-                row[i] = when (cursor.getType(i)) {
-                    Cursor.FIELD_TYPE_NULL -> null
-                    Cursor.FIELD_TYPE_INTEGER -> cursor.getLong(i)
-                    Cursor.FIELD_TYPE_FLOAT -> cursor.getDouble(i)
-                    Cursor.FIELD_TYPE_BLOB -> cursor.getBlob(i)
-                    else -> cursor.getString(i)
-                }
-            }
-            val name = if (nameIdx >= 0) row[nameIdx] as? String else uri.lastPathSegment
-            if (name != null && name in Config.SPOOF_KEYS) {
-                row[valueIdx] = "0"
-                hit = true
-            }
-            rows.add(row)
-        }
-        cursor.moveToPosition(position)
-        if (!hit) return null
-
-        val matrix = MatrixCursor(columns, rows.size)
-        for (row in rows) matrix.addRow(row)
-        runCatching { cursor.extras?.let { matrix.extras = it } }
-        runCatching { cursor.close() }
-        return matrix
     }
 
     private fun announceToManager() {

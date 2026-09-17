@@ -13,55 +13,68 @@ object SystemServerPart {
 
     private const val NMS_CLASS = "com.android.server.notification.NotificationManagerService"
 
+    private const val SETTLE_MS = 8000L
+
     @Volatile
     var blocked = 0
         private set
+
+    @Volatile
+    private var seen = false
 
     fun init() {
         if (ModuleConfig.disabled) {
             Logx.i("kill switch present, no hooks installed")
             return
         }
-        if (!ModuleConfig.config.hookSystemServer) {
-            Logx.i("system_server hooks are opt-in and disabled, nothing to install")
+        val config = ModuleConfig.config
+        if (!config.hookSystemServer) {
+            Logx.i("system_server hooks are opt-in and disabled")
             return
         }
-        if (!ModuleConfig.config.hideNotif) {
-            Logx.i("notification suppressor off, nothing to install")
+        if (!config.hideNotif && !config.frameworkMode) {
+            Logx.i("nothing enabled for system_server")
             return
         }
-        hookNotificationManager()
-        thread(name = "duckusb-nms", isDaemon = true) { hookNotificationManagerService() }
+        thread(name = "duckusb-server", isDaemon = true) { armAfterBoot() }
     }
 
-    private fun hookNotificationManager() {
-        val nm = XHook.findClass("android.app.NotificationManager") ?: return
-        var count = 0
-        for (name in arrayOf("notify", "notifyAsUser")) {
-            for (m in XHook.methodsOf(nm)) {
-                if (m.name != name || m.returnType != Void.TYPE) continue
-                if (XHook.hook(m, ::onNotify)) count++
-            }
-        }
-        Logx.i("notification wrapper hooked: $count methods")
-    }
-
-    private fun hookNotificationManagerService() {
-        val loader = systemServerClassLoader()
-        if (!waitForService("notification")) {
-            Logx.e("notification service never appeared")
+    private fun armAfterBoot() {
+        if (!waitForBootCompleted()) {
+            Logx.e("boot never completed, notification suppressor not armed")
             return
         }
-        val nms = XHook.findClass(NMS_CLASS, loader) ?: run {
+        Thread.sleep(SETTLE_MS)
+        if (ModuleConfig.config.frameworkMode) {
+            runCatching { FrameworkPart.arm() }
+                .onFailure { Logx.e("framework mode failed to arm", it) }
+        }
+        if (!ModuleConfig.config.hideNotif) return
+        val nms = XHook.findClass(NMS_CLASS, systemServerClassLoader()) ?: run {
             Logx.e("NotificationManagerService not found")
             return
         }
         var count = 0
         for (m in XHook.methodsOf(nms)) {
-            if (m.name != "enqueueNotificationInternal" || m.returnType != Void.TYPE) continue
-            if (XHook.hook(m, ::onNotify)) count++
+            if (m.name != "enqueueNotificationInternal") continue
+            if (m.returnType != Void.TYPE) continue
+            if (XHook.hook(m, ::onEnqueue)) count++
         }
-        Logx.i("notification service hooked: $count methods")
+        Logx.i("notification suppressor armed: $count methods, titles=$adbTitles")
+    }
+
+    private fun waitForBootCompleted(): Boolean {
+        val get = runCatching {
+            Class.forName("android.os.SystemProperties")
+                .getDeclaredMethod("get", String::class.java)
+                .apply { isAccessible = true }
+        }.getOrNull() ?: return false
+        repeat(600) {
+            val value = runCatching { get.invoke(null, "sys.boot_completed") as? String }.getOrNull()
+            if (value == "1") return true
+            Thread.sleep(1000)
+        }
+        return false
     }
 
     private fun systemServerClassLoader(): ClassLoader? = try {
@@ -74,32 +87,26 @@ object SystemServerPart {
         null
     }
 
-    private fun waitForService(name: String): Boolean {
-        return try {
-            val getService = Class.forName("android.os.ServiceManager")
-                .getDeclaredMethod("getService", String::class.java)
-                .apply { isAccessible = true }
-            repeat(600) {
-                if (getService.invoke(null, name) != null) return true
-                Thread.sleep(250)
-            }
-            false
-        } catch (t: Throwable) {
-            Logx.e("waitForService($name) failed", t)
-            false
+    private fun onEnqueue(f: Frame) {
+        if (!seen) {
+            seen = true
+            Logx.i("notification hook live")
         }
-    }
-
-    private fun onNotify(f: Frame) {
         val config = ModuleConfig.config
         if (ModuleConfig.disabled || config.paused || !config.hideNotif) {
             f.proceed()
             return
         }
-        val notification = f.args.firstOrNull { it is Notification } as? Notification
-        if (notification != null && isAdbNotification(notification)) {
+        val swallow = try {
+            val notification = f.args.firstOrNull { it is Notification } as? Notification
+            notification != null && isAdbNotification(notification)
+        } catch (t: Throwable) {
+            Logx.e("notification match failed", t)
+            false
+        }
+        if (swallow) {
             blocked++
-            Logx.i("swallowed the adb notification from ${f.member.name}")
+            Logx.i("swallowed the adb notification")
             return
         }
         f.proceed()

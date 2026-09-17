@@ -12,6 +12,7 @@ data class DuckConfig(
     var verboseLog: Boolean = false,
     var hookGetters: Boolean = false,
     var hookSystemServer: Boolean = false,
+    var frameworkMode: Boolean = false,
     var targets: MutableSet<String> = LinkedHashSet(),
 ) {
     fun isTarget(pkg: String?): Boolean {
@@ -30,6 +31,7 @@ data class DuckConfig(
         put(KEY_VERBOSE, verboseLog)
         put(KEY_HOOK_GETTERS, hookGetters)
         put(KEY_HOOK_SYSTEM_SERVER, hookSystemServer)
+        put(KEY_FRAMEWORK_MODE, frameworkMode)
         put(KEY_TARGETS, JSONArray(targets.toList()))
     }.toString(2)
 
@@ -45,6 +47,7 @@ data class DuckConfig(
         private const val KEY_VERBOSE = "verboseLog"
         private const val KEY_HOOK_GETTERS = "hookGetters"
         private const val KEY_HOOK_SYSTEM_SERVER = "hookSystemServer"
+        private const val KEY_FRAMEWORK_MODE = "frameworkMode"
         private const val KEY_TARGETS = "targets"
 
         fun parse(text: String?): DuckConfig {
@@ -64,6 +67,7 @@ data class DuckConfig(
                     verboseLog = o.optBoolean(KEY_VERBOSE, false),
                     hookGetters = o.optBoolean(KEY_HOOK_GETTERS, false),
                     hookSystemServer = o.optBoolean(KEY_HOOK_SYSTEM_SERVER, false),
+                    frameworkMode = o.optBoolean(KEY_FRAMEWORK_MODE, false),
                     targets = targets,
                 )
             } catch (_: Throwable) {
