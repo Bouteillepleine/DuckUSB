@@ -44,6 +44,9 @@ class MainActivity : AppCompatActivity() {
     private var recordsOpen = false
     private var zygiskFlavor = "unknown"
     private var moduleVersion: String? = null
+    private var rootSettings: Map<String, String> = emptyMap()
+    private var rootProps: Map<String, String> = emptyMap()
+    private var loaded = false
     private var tab = R.id.tab_status
 
     private val cOnSurface get() = attr(MR.attr.colorOnSurface)
@@ -119,16 +122,32 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun reload() {
-        rootAvailable = Root.available()
-        moduleInstalled = rootAvailable && Root.moduleInstalled()
-        hooksKilled = moduleInstalled && Root.hooksKilled()
-        config = (if (moduleInstalled) Root.readConfig() else null) ?: config
         live = runCatching { System.getProperty(Config.LIVE_PROPERTY) != null }.getOrDefault(false)
-        serviceState = ServiceClient.state(this)
-        records = ServiceClient.records(this).sortedByDescending { it.getInt(Bridge.REC_COUNT) }
-        zygiskFlavor = if (rootAvailable) Root.zygiskFlavor() else "unknown"
-        moduleVersion = if (moduleInstalled) Root.moduleVersion() else null
         render()
+        background {
+            val snapshot = Root.snapshot(Config.SPOOF_KEYS.toList(), PROP_KEYS)
+            val state = ServiceClient.state(this)
+            val callers = ServiceClient.records(this)
+                .sortedByDescending { it.getInt(Bridge.REC_COUNT) }
+            runOnUiThread {
+                rootAvailable = snapshot.rootAvailable
+                moduleInstalled = snapshot.moduleInstalled
+                hooksKilled = snapshot.hooksKilled
+                snapshot.config?.let { config = it }
+                moduleVersion = snapshot.moduleVersion
+                zygiskFlavor = snapshot.zygisk
+                rootSettings = snapshot.settings
+                rootProps = snapshot.props
+                serviceState = state
+                records = callers
+                loaded = true
+                render()
+            }
+        }
+    }
+
+    private fun background(work: () -> Unit) {
+        Thread { runCatching(work) }.apply { isDaemon = true }.start()
     }
 
     private fun render() {
@@ -393,8 +412,12 @@ class MainActivity : AppCompatActivity() {
                     setPadding(0, dp(10), 0, 0)
                     isClickable = true
                     setOnClickListener {
-                        ServiceClient.clearRecords(this@MainActivity)
-                        reload()
+                        records = emptyList()
+                        renderContent()
+                        background {
+                            ServiceClient.clearRecords(this@MainActivity)
+                            runOnUiThread { reload() }
+                        }
                     }
                 })
             }
@@ -462,11 +485,11 @@ class MainActivity : AppCompatActivity() {
             setPadding(dp(16), dp(14), dp(16), dp(14))
         }
         for (key in Config.SPOOF_KEYS) {
-            col.addView(readingRow(key, globalSetting(key), if (rootAvailable) Root.globalSetting(key) else null))
+            col.addView(readingRow(key, globalSetting(key), rootSettings[key]))
         }
         col.addView(thinDivider())
-        for (key in listOf("persist.sys.usb.config", "sys.usb.state", "sys.usb.config", "init.svc.adbd")) {
-            col.addView(readingRow(key, systemProperty(key), if (rootAvailable) Root.property(key) else null))
+        for (key in PROP_KEYS) {
+            col.addView(readingRow(key, systemProperty(key), rootProps[key]))
         }
         col.addView(TextView(this).apply {
             text = "Left chip is what this app reads, right chip is what root reads. DuckUSB never spoofs itself, so a mismatch here means something else on this device is spoofing this app."
@@ -489,7 +512,7 @@ class MainActivity : AppCompatActivity() {
                 config.frameworkMode = it
                 config.hookSystemServer = it || config.hideNotif
                 save()
-                reload()
+                renderContent()
             }
         )
         col.addView(thinDivider())
@@ -497,7 +520,7 @@ class MainActivity : AppCompatActivity() {
             toggleRow(R.drawable.ic_allapps, "Cover every app", "No scope list at all. Shell, system uids and the file-transfer apps still read the truth.", config.frameworkAllApps) {
                 config.frameworkAllApps = it
                 save()
-                reload()
+                renderContent()
             }
         )
         col.addView(thinDivider())
@@ -505,7 +528,7 @@ class MainActivity : AppCompatActivity() {
             toggleRow(R.drawable.ic_usb, "Spoof USB debugging", "adb_enabled · adb_wifi_enabled · Developer Options → 0", config.spoofSettings) {
                 config.spoofSettings = it
                 save()
-                reload()
+                renderContent()
             }
         )
         col.addView(thinDivider())
@@ -521,7 +544,7 @@ class MainActivity : AppCompatActivity() {
                 config.hideNotif = it
                 config.hookSystemServer = it || config.frameworkMode
                 save()
-                reload()
+                renderContent()
             }
         )
         col.addView(thinDivider())
@@ -529,7 +552,7 @@ class MainActivity : AppCompatActivity() {
             toggleRow(R.drawable.ic_tag, "Mask the USB config property", "persist.sys.usb.config reads mtp instead of adb, in the property area itself so every read route agrees. Reverts on reboot. Needs a reboot.", config.spoofProps) {
                 config.spoofProps = it
                 save()
-                reload()
+                renderContent()
             }
         )
         col.addView(thinDivider())
@@ -543,8 +566,11 @@ class MainActivity : AppCompatActivity() {
         col.addView(
             toggleRow(R.drawable.ic_power, "Kill switch", "Disables every hook on the next boot without uninstalling.", hooksKilled) {
                 hooksKilled = it
-                Root.setHooksKilled(it)
-                reload()
+                renderContent()
+                background {
+                    Root.setHooksKilled(it)
+                    Root.refreshDescription()
+                }
             }
         )
         card.addView(col)
@@ -592,11 +618,15 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun save() {
-        if (moduleInstalled) {
-            Root.writeConfig(config)
-            Root.refreshDescription()
+        val snapshot = config.copy()
+        val installed = moduleInstalled
+        background {
+            if (installed) {
+                Root.writeConfig(snapshot)
+                Root.refreshDescription()
+            }
+            ServiceClient.push(this, snapshot)
         }
-        ServiceClient.push(this, config)
     }
 
     private fun toggleRow(
@@ -731,6 +761,9 @@ class MainActivity : AppCompatActivity() {
 
     private fun attr(attrId: Int, fallback: Int = Color.GRAY): Int =
         MaterialColors.getColor(this, attrId, fallback)
+
+    private val PROP_KEYS =
+        listOf("persist.sys.usb.config", "sys.usb.state", "sys.usb.config", "init.svc.adbd")
 
     private fun appVersion(): String = try {
         packageManager.getPackageInfo(packageName, 0).versionName ?: "?"

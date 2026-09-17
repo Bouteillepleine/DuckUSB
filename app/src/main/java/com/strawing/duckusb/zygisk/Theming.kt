@@ -42,5 +42,6 @@ class App : Application() {
         super.onCreate()
         Theming.restore(this)
         DynamicColors.applyToActivitiesIfAvailable(this)
+        Thread { runCatching { Root.warm() } }.apply { isDaemon = true }.start()
     }
 }

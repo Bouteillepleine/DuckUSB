@@ -96,6 +96,91 @@ object Root {
         return result.out.firstOrNull()?.trim()?.removePrefix("version=")?.trim()?.takeIf { it.isNotEmpty() }
     }
 
+    class Snapshot(
+        val rootAvailable: Boolean,
+        val moduleInstalled: Boolean,
+        val hooksKilled: Boolean,
+        val config: DuckConfig?,
+        val moduleVersion: String?,
+        val zygisk: String,
+        val settings: Map<String, String>,
+        val props: Map<String, String>,
+    )
+
+    fun warm() {
+        runCatching { Shell.getShell() }
+    }
+
+    fun snapshot(settingKeys: List<String>, propKeys: List<String>): Snapshot {
+        val script = buildString {
+            append("MD=${Config.MODULE_DIR}\n")
+            append("[ -d \$MD ] && echo 'installed=1' || echo 'installed=0'\n")
+            append("[ -f ${Config.DISABLE_FILE} ] && echo 'killed=1' || echo 'killed=0'\n")
+            append("grep -m1 '^version=' \$MD/module.prop 2>/dev/null | sed 's/^/module/'\n")
+            for (dir in ZYGISK_MODULES) {
+                append("grep -m1 '^name=' $dir/module.prop 2>/dev/null | sed 's/^name=/zygisk=/'\n")
+            }
+            append("echo '#settings'\n")
+            append("settings list global 2>/dev/null | grep -E '^(")
+            append(settingKeys.joinToString("|"))
+            append(")='\n")
+            append("echo '#props'\n")
+            for (key in propKeys) append("echo '$key='\$(getprop $key)\n")
+            append("echo '#config'\n")
+            append("cat ${Config.CONFIG_FILE} 2>/dev/null\n")
+        }
+        val result = exec(script)
+        if (!result.isSuccess && result.out.isEmpty()) {
+            return Snapshot(false, false, false, null, null, "unknown", emptyMap(), emptyMap())
+        }
+
+        var installed = false
+        var killed = false
+        var moduleVersion: String? = null
+        var zygisk: String? = null
+        val settings = LinkedHashMap<String, String>()
+        val props = LinkedHashMap<String, String>()
+        val configText = StringBuilder()
+        var section = ""
+
+        for (raw in result.out) {
+            val line = raw.trim()
+            if (line.startsWith("#")) {
+                section = line
+                continue
+            }
+            when (section) {
+                "#settings" -> line.split("=", limit = 2).let {
+                    if (it.size == 2) settings[it[0]] = it[1]
+                }
+                "#props" -> line.split("=", limit = 2).let {
+                    if (it.size == 2) props[it[0]] = it[1]
+                }
+                "#config" -> configText.append(raw).append('\n')
+                else -> when {
+                    line == "installed=1" -> installed = true
+                    line == "killed=1" -> killed = true
+                    line.startsWith("moduleversion=") ->
+                        moduleVersion = line.removePrefix("moduleversion=").takeIf { it.isNotEmpty() }
+                    line.startsWith("zygisk=") ->
+                        if (zygisk == null) zygisk = line.removePrefix("zygisk=").takeIf { it.isNotEmpty() }
+                }
+            }
+        }
+
+        val config = configText.toString().takeIf { it.isNotBlank() }?.let { DuckConfig.parse(it) }
+        return Snapshot(
+            rootAvailable = true,
+            moduleInstalled = installed,
+            hooksKilled = installed && killed,
+            config = config,
+            moduleVersion = moduleVersion,
+            zygisk = zygisk ?: "unknown",
+            settings = settings,
+            props = props,
+        )
+    }
+
     fun refreshDescription() {
         exec("sh ${Config.MODULE_DIR}/describe.sh")
     }
