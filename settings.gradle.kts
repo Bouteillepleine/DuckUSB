@@ -32,4 +32,4 @@ dependencyResolutionManagement {
 
 rootProject.name = "DuckUSB-Zygisk"
 
-include(":common", ":zygote")
+include(":common", ":zygote", ":app")

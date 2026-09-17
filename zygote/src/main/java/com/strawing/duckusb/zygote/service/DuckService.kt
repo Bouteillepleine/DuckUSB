@@ -42,9 +42,18 @@ class DuckService(private val context: Context) : IDuckService.Stub() {
     private val spareCache = SparseBooleanArray()
     private val targetCache = SparseBooleanArray()
 
-    val callerAppId: Int = runCatching {
-        context.packageManager.getApplicationInfo(Config.PKG, 0).uid % Config.PER_USER_RANGE
-    }.getOrDefault(-1)
+    @Volatile
+    private var resolvedAppId = -1
+
+    val callerAppId: Int
+        get() {
+            if (resolvedAppId >= 0) return resolvedAppId
+            val id = runCatching {
+                context.packageManager.getApplicationInfo(Config.PKG, 0).uid % Config.PER_USER_RANGE
+            }.getOrDefault(-1)
+            if (id >= 0) resolvedAppId = id
+            return id
+        }
 
     private fun enforceCaller() {
         val uid = Binder.getCallingUid()
@@ -69,7 +78,8 @@ class DuckService(private val context: Context) : IDuckService.Stub() {
             val i = spareCache.indexOfKey(uid)
             if (i >= 0) return spareCache.valueAt(i)
         }
-        val spared = packagesFor(uid)?.any { it in Config.SPARE_PACKAGES } == true
+        val packages = packagesFor(uid) ?: return false
+        val spared = packages.any { it in Config.SPARE_PACKAGES }
         synchronized(lock) { spareCache.put(uid, spared) }
         return spared
     }
@@ -82,7 +92,8 @@ class DuckService(private val context: Context) : IDuckService.Stub() {
             val i = targetCache.indexOfKey(uid)
             if (i >= 0) return targetCache.valueAt(i)
         }
-        val target = packagesFor(uid)?.any { config.isTarget(it) } == true
+        val packages = packagesFor(uid) ?: return false
+        val target = packages.any { config.isTarget(it) }
         synchronized(lock) { targetCache.put(uid, target) }
         return target
     }
