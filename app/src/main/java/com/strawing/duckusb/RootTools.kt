@@ -7,6 +7,9 @@ object RootTools {
     const val BOOT_SCRIPT = "/data/adb/service.d/duckusb-usbprop.sh"
     const val USB_PROP = "persist.sys.usb.config"
     const val USB_SAFE = "mtp"
+    const val ADBD_PROP = "init.svc.adbd"
+    const val ADBD_SAFE = "stopped"
+    private const val MASKED = "$USB_PROP=$USB_SAFE $ADBD_PROP=$ADBD_SAFE"
 
     init {
         Shell.enableVerboseLogging = false
@@ -71,9 +74,13 @@ object RootTools {
     }
 
     /**
-     * The value is changed in the property area only, never in
+     * Values are changed in the property area only, never in
      * /data/property/persistent_properties: init seeds sys.usb.config from the persisted
      * value at boot, so writing mtp to disk would bring USB up with no adb interface.
+     *
+     * -n is load-bearing for init.svc.adbd too. Going through property_service would fire
+     * init's "on property:init.svc.adbd=stopped" rule, which clears sys.usb.ffs.ready and
+     * takes the USB gadget down entirely.
      */
     fun setPropMask(enabled: Boolean): Boolean {
         if (!enabled) {
@@ -93,7 +100,11 @@ object RootTools {
             [ -z "${'$'}RP" ] && exit 0
             pass=0
             while [ ${'$'}pass -lt 10 ]; do
-                [ "${'$'}(getprop $USB_PROP)" = "$USB_SAFE" ] || "${'$'}RP" -n $USB_PROP $USB_SAFE
+                for pair in $MASKED; do
+                    key=${'$'}{pair%%=*}
+                    want=${'$'}{pair#*=}
+                    [ "${'$'}(getprop ${'$'}key)" = "${'$'}want" ] || "${'$'}RP" -n "${'$'}key" "${'$'}want"
+                done
                 pass=${'$'}((pass + 1))
                 sleep 30
             done
@@ -113,7 +124,11 @@ object RootTools {
             done
             [ -z "${'$'}RP" ] && RP=${'$'}(command -v resetprop 2>/dev/null)
             [ -z "${'$'}RP" ] && exit 1
-            "${'$'}RP" -n $USB_PROP $USB_SAFE
+            for pair in $MASKED; do
+                key=${'$'}{pair%%=*}
+                want=${'$'}{pair#*=}
+                "${'$'}RP" -n "${'$'}key" "${'$'}want"
+            done
         """.trimIndent()
         return exec(script).isSuccess
     }
@@ -124,13 +139,14 @@ object RootTools {
      */
     fun restoreProp(): Boolean = exec(
         """
-        [ "${'$'}(getprop $USB_PROP)" = "$USB_SAFE" ] || exit 0
         RP=
         for candidate in /data/adb/ksu/bin/resetprop /data/adb/ap/bin/resetprop /data/adb/magisk/resetprop; do
             [ -x "${'$'}candidate" ] && RP="${'$'}candidate" && break
         done
         [ -z "${'$'}RP" ] && exit 1
-        "${'$'}RP" -n $USB_PROP adb
+        [ "${'$'}(getprop $USB_PROP)" = "$USB_SAFE" ] && "${'$'}RP" -n $USB_PROP adb
+        [ "${'$'}(getprop $ADBD_PROP)" = "$ADBD_SAFE" ] && "${'$'}RP" -n $ADBD_PROP running
+        exit 0
         """.trimIndent()
     ).isSuccess
 

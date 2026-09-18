@@ -321,7 +321,7 @@ class MainActivity : AppCompatActivity() {
         col.addView(ui.thinDivider())
         col.addView(ui.toggleRow(
             DuckUi.Icons.tag, "Mask the USB config property",
-            "persist.sys.usb.config reads mtp instead of adb, in the property area itself so every read route agrees. Reverts on reboot. Needs a reboot.",
+            "persist.sys.usb.config reads mtp and init.svc.adbd reads stopped, in the property area itself so every read route agrees. adbd keeps running. Reverts on reboot.",
             config.spoofProps,
         ) {
             config.spoofProps = it

@@ -6,8 +6,8 @@ plugins {
 
 val appPackageName by extra("com.strawing.duckusb")
 val moduleId by extra("duckusb_zygisk")
-val moduleVersionName by extra("2.0.0")
-val moduleVersionCode by extra(20)
+val moduleVersionName by extra("2.0.1")
+val moduleVersionCode by extra(21)
 
 tasks.register("clean", Delete::class) {
     delete(rootProject.layout.buildDirectory)

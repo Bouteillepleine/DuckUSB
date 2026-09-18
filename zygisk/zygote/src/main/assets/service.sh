@@ -1,9 +1,8 @@
 MODDIR=${0%/*}
 LIMIT=150
-USB_PROP=persist.sys.usb.config
-USB_SAFE=mtp
-USB_PASSES=10
-USB_INTERVAL=30
+MASKED="persist.sys.usb.config=mtp init.svc.adbd=stopped"
+MASK_PASSES=10
+MASK_INTERVAL=30
 
 i=0
 while [ "$(getprop sys.boot_completed)" != "1" ]; do
@@ -44,16 +43,23 @@ prop_spoof_wanted() {
 prop_spoof_wanted || exit 0
 
 RESETPROP=$(find_resetprop) || {
-    log -t DuckUSB "no resetprop available, $USB_PROP left alone"
+    log -t DuckUSB "no resetprop available, properties left alone"
     exit 0
 }
 
+# -n is load-bearing: it writes the property area directly. Going through
+# property_service would fire init's "on property:init.svc.adbd=stopped" rule, which
+# clears sys.usb.ffs.ready and takes the USB gadget down entirely.
 pass=0
-while [ "$pass" -lt "$USB_PASSES" ]; do
-    if [ "$(getprop $USB_PROP)" != "$USB_SAFE" ]; then
-        "$RESETPROP" -n "$USB_PROP" "$USB_SAFE"
-        log -t DuckUSB "$USB_PROP now reads $(getprop $USB_PROP) in memory"
-    fi
+while [ "$pass" -lt "$MASK_PASSES" ]; do
+    for pair in $MASKED; do
+        key=${pair%%=*}
+        want=${pair#*=}
+        if [ "$(getprop $key)" != "$want" ]; then
+            "$RESETPROP" -n "$key" "$want"
+            log -t DuckUSB "$key now reads $(getprop $key) in memory"
+        fi
+    done
     pass=$((pass + 1))
-    sleep "$USB_INTERVAL"
+    sleep "$MASK_INTERVAL"
 done
