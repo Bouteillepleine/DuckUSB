@@ -1,8 +1,6 @@
 MODDIR=${0%/*}
 LIMIT=150
-MASKED="persist.sys.usb.config=mtp init.svc.adbd=stopped"
-MASK_PASSES=10
-MASK_INTERVAL=30
+MASK_INTERVAL=60
 
 i=0
 while [ "$(getprop sys.boot_completed)" != "1" ]; do
@@ -31,35 +29,45 @@ find_resetprop() {
     return 1
 }
 
-prop_spoof_wanted() {
-    [ -f "$MODDIR/disable_hooks" ] && return 1
+flag() {
     CONFIG="$MODDIR/config.json"
     [ -f "$CONFIG" ] || return 1
-    grep -q '"spoofProps"[[:space:]]*:[[:space:]]*true' "$CONFIG" || return 1
-    grep -q '"paused"[[:space:]]*:[[:space:]]*true' "$CONFIG" && return 1
-    return 0
+    grep -q "\"$1\"[[:space:]]*:[[:space:]]*true" "$CONFIG"
 }
 
-prop_spoof_wanted || exit 0
+masked_list() {
+    [ -f "$MODDIR/disable_hooks" ] && return 1
+    flag paused && return 1
+    flag spoofProps || return 1
+    LIST="persist.sys.usb.config=mtp init.svc.adbd=stopped"
+    # The live USB control surface, so it is opt-in: system_server's own UsbDeviceManager
+    # reads these too, and it will believe the lie.
+    flag spoofUsbState && LIST="$LIST sys.usb.config=mtp sys.usb.state=mtp"
+    echo "$LIST"
+    return 0
+}
 
 RESETPROP=$(find_resetprop) || {
     log -t DuckUSB "no resetprop available, properties left alone"
     exit 0
 }
 
-# -n is load-bearing: it writes the property area directly. Going through
-# property_service would fire init's "on property:init.svc.adbd=stopped" rule, which
-# clears sys.usb.ffs.ready and takes the USB gadget down entirely.
-pass=0
-while [ "$pass" -lt "$MASK_PASSES" ]; do
-    for pair in $MASKED; do
-        key=${pair%%=*}
-        want=${pair#*=}
-        if [ "$(getprop $key)" != "$want" ]; then
-            "$RESETPROP" -n "$key" "$want"
-            log -t DuckUSB "$key now reads $(getprop $key) in memory"
-        fi
-    done
-    pass=$((pass + 1))
+# Runs for the life of the boot, not a fixed number of passes: init rewrites init.svc.* on
+# every service state change, so a USB mode switch or a stop/start of adbd unmasks it again.
+#
+# -n is load-bearing. Going through property_service would fire init's
+# "on property:init.svc.adbd=stopped" rule, which clears sys.usb.ffs.ready and takes the USB
+# gadget down entirely.
+while true; do
+    if MASKED=$(masked_list); then
+        for pair in $MASKED; do
+            key=${pair%%=*}
+            want=${pair#*=}
+            if [ "$(getprop $key)" != "$want" ]; then
+                "$RESETPROP" -n "$key" "$want"
+                log -t DuckUSB "$key now reads $(getprop $key) in memory"
+            fi
+        done
+    fi
     sleep "$MASK_INTERVAL"
 done

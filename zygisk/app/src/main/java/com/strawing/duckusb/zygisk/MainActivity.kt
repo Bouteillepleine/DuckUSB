@@ -330,6 +330,16 @@ class MainActivity : AppCompatActivity() {
         })
         col.addView(ui.thinDivider())
         col.addView(ui.toggleRow(
+            DuckUi.Icons.allApps, "Mask the USB function list",
+            "sys.usb.config and sys.usb.state read mtp, hiding the adb function itself. Closes detectors that read those directly. system_server's own USB manager believes it too, so leave it off unless you need it.",
+            config.spoofUsbState,
+        ) {
+            config.spoofUsbState = it
+            save()
+            renderContent()
+        })
+        col.addView(ui.thinDivider())
+        col.addView(ui.toggleRow(
             DuckUi.Icons.log, "Verbose log",
             "One logcat line per spoofed read. Off unless you are investigating.",
             config.verboseLog,

@@ -7,6 +7,7 @@ data class DuckConfig(
     var paused: Boolean = false,
     var spoofSettings: Boolean = true,
     var spoofProps: Boolean = true,
+    var spoofUsbState: Boolean = false,
     var hideNotif: Boolean = true,
     var coverQueryPath: Boolean = true,
     var verboseLog: Boolean = false,
@@ -30,6 +31,7 @@ data class DuckConfig(
         o.put(KEY_PAUSED, paused)
         o.put(KEY_SPOOF_SETTINGS, spoofSettings)
         o.put(KEY_SPOOF_PROPS, spoofProps)
+        o.put(KEY_SPOOF_USB_STATE, spoofUsbState)
         o.put(KEY_HIDE_NOTIF, hideNotif)
         o.put(KEY_COVER_QUERY, coverQueryPath)
         o.put(KEY_VERBOSE, verboseLog)
@@ -48,6 +50,7 @@ data class DuckConfig(
         private const val KEY_PAUSED = "paused"
         private const val KEY_SPOOF_SETTINGS = "spoofSettings"
         private const val KEY_SPOOF_PROPS = "spoofProps"
+        private const val KEY_SPOOF_USB_STATE = "spoofUsbState"
         private const val KEY_HIDE_NOTIF = "hideNotif"
         private const val KEY_COVER_QUERY = "coverQueryPath"
         private const val KEY_VERBOSE = "verboseLog"
@@ -71,6 +74,7 @@ data class DuckConfig(
                     paused = o.optBoolean(KEY_PAUSED, false),
                     spoofSettings = o.optBoolean(KEY_SPOOF_SETTINGS, true),
                     spoofProps = o.optBoolean(KEY_SPOOF_PROPS, true),
+                    spoofUsbState = o.optBoolean(KEY_SPOOF_USB_STATE, false),
                     hideNotif = o.optBoolean(KEY_HIDE_NOTIF, true),
                     coverQueryPath = o.optBoolean(KEY_COVER_QUERY, true),
                     verboseLog = o.optBoolean(KEY_VERBOSE, false),

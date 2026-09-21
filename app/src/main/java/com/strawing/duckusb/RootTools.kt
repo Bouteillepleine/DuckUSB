@@ -9,7 +9,12 @@ object RootTools {
     const val USB_SAFE = "mtp"
     const val ADBD_PROP = "init.svc.adbd"
     const val ADBD_SAFE = "stopped"
-    private const val MASKED = "$USB_PROP=$USB_SAFE $ADBD_PROP=$ADBD_SAFE"
+
+    private const val BASE_MASK = "$USB_PROP=$USB_SAFE $ADBD_PROP=$ADBD_SAFE"
+    private const val USB_STATE_MASK = "sys.usb.config=mtp sys.usb.state=mtp"
+
+    private fun maskList(includeUsbState: Boolean): String =
+        if (includeUsbState) "$BASE_MASK $USB_STATE_MASK" else BASE_MASK
 
     init {
         Shell.enableVerboseLogging = false
@@ -81,11 +86,15 @@ object RootTools {
      * -n is load-bearing for init.svc.adbd too. Going through property_service would fire
      * init's "on property:init.svc.adbd=stopped" rule, which clears sys.usb.ffs.ready and
      * takes the USB gadget down entirely.
+     *
+     * The script re-applies for the life of the boot rather than a fixed number of passes,
+     * because init rewrites init.svc.* whenever the service changes state.
      */
-    fun setPropMask(enabled: Boolean): Boolean {
+    fun setPropMask(enabled: Boolean, includeUsbState: Boolean = false): Boolean {
         if (!enabled) {
             return exec("rm -f $BOOT_SCRIPT").isSuccess
         }
+        val masked = maskList(includeUsbState)
         val script = """
             mkdir -p /data/adb/service.d
             cat > $BOOT_SCRIPT <<'DUCKUSB_BOOT'
@@ -98,25 +107,24 @@ object RootTools {
             done
             [ -z "${'$'}RP" ] && RP=${'$'}(command -v resetprop 2>/dev/null)
             [ -z "${'$'}RP" ] && exit 0
-            pass=0
-            while [ ${'$'}pass -lt 10 ]; do
-                for pair in $MASKED; do
+            while true; do
+                for pair in $masked; do
                     key=${'$'}{pair%%=*}
                     want=${'$'}{pair#*=}
                     [ "${'$'}(getprop ${'$'}key)" = "${'$'}want" ] || "${'$'}RP" -n "${'$'}key" "${'$'}want"
                 done
-                pass=${'$'}((pass + 1))
-                sleep 30
+                sleep 60
             done
             DUCKUSB_BOOT
             chmod 0755 $BOOT_SCRIPT
         """.trimIndent()
         val written = exec(script).isSuccess
-        applyNow()
+        applyNow(includeUsbState)
         return written
     }
 
-    fun applyNow(): Boolean {
+    fun applyNow(includeUsbState: Boolean = false): Boolean {
+        val masked = maskList(includeUsbState)
         val script = """
             RP=
             for candidate in /data/adb/ksu/bin/resetprop /data/adb/ap/bin/resetprop /data/adb/magisk/resetprop; do
@@ -124,7 +132,7 @@ object RootTools {
             done
             [ -z "${'$'}RP" ] && RP=${'$'}(command -v resetprop 2>/dev/null)
             [ -z "${'$'}RP" ] && exit 1
-            for pair in $MASKED; do
+            for pair in $masked; do
                 key=${'$'}{pair%%=*}
                 want=${'$'}{pair#*=}
                 "${'$'}RP" -n "${'$'}key" "${'$'}want"
@@ -135,7 +143,8 @@ object RootTools {
 
     /**
      * Only ever undoes our own change: the mask is memory-only, so the persisted value is
-     * still the truth and a reboot would restore it anyway.
+     * still the truth and a reboot would restore it anyway. sys.usb.* is put back from
+     * sys.usb.state's real source, the bound gadget's own function list.
      */
     fun restoreProp(): Boolean = exec(
         """
@@ -146,6 +155,10 @@ object RootTools {
         [ -z "${'$'}RP" ] && exit 1
         [ "${'$'}(getprop $USB_PROP)" = "$USB_SAFE" ] && "${'$'}RP" -n $USB_PROP adb
         [ "${'$'}(getprop $ADBD_PROP)" = "$ADBD_SAFE" ] && "${'$'}RP" -n $ADBD_PROP running
+        TRUE_CFG=${'$'}(cat /sys/class/android_usb/android0/functions 2>/dev/null)
+        [ -z "${'$'}TRUE_CFG" ] && TRUE_CFG=mtp,adb
+        [ "${'$'}(getprop sys.usb.config)" = "mtp" ] && "${'$'}RP" -n sys.usb.config "${'$'}TRUE_CFG"
+        [ "${'$'}(getprop sys.usb.state)" = "mtp" ] && "${'$'}RP" -n sys.usb.state "${'$'}TRUE_CFG"
         exit 0
         """.trimIndent()
     ).isSuccess

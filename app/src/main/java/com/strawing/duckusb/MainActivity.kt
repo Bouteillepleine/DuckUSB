@@ -239,7 +239,7 @@ class MainActivity : AppCompatActivity() {
             setFlag(Config.KEY_MASK_USB_PROP, wanted)
             renderContent()
             background {
-                val ok = if (wanted) RootTools.setPropMask(true) else {
+                val ok = if (wanted) RootTools.setPropMask(true, flag(Config.KEY_MASK_USB_STATE, false)) else {
                     RootTools.setPropMask(false)
                     RootTools.restoreProp()
                 }
@@ -254,6 +254,20 @@ class MainActivity : AppCompatActivity() {
                     }
                     reload()
                 }
+            }
+        })
+        col.addView(ui.thinDivider())
+        col.addView(ui.toggleRow(
+            DuckUi.Icons.allApps, "Mask the USB function list",
+            "sys.usb.config and sys.usb.state read mtp, hiding the adb function itself. Closes detectors that read those directly. system_server's own USB manager believes it too, so leave it off unless you need it.",
+            flag(Config.KEY_MASK_USB_STATE, false), rootAvailable,
+        ) { wanted ->
+            setFlag(Config.KEY_MASK_USB_STATE, wanted)
+            renderContent()
+            background {
+                if (propMaskInstalled) RootTools.setPropMask(true, wanted)
+                if (!wanted) RootTools.restoreProp()
+                runOnUiThread { reload() }
             }
         })
         col.addView(ui.thinDivider())
