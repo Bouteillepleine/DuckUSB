@@ -60,8 +60,13 @@ object Root {
         return result.isSuccess
     }
 
-    fun syncPackages(): Boolean {
+    fun syncPackages(config: DuckConfig? = null): Boolean {
         val keep = linkedSetOf(Config.SYSTEM_SERVER_PACKAGE, Config.PKG)
+        // The property spoof is a libc read hook, so it only exists inside a process we are
+        // actually injected into. Settings spoofing does not need this - it is told in
+        // system_server - so the scope only widens when spoofUsbState is on, and it costs
+        // real injection into those apps.
+        if (config != null && config.spoofProps && config.spoofUsbState) keep += config.targets
         val commands = ArrayList<String>()
         commands += "mkdir -p ${Config.PACKAGES_DIR}"
         commands += "find ${Config.PACKAGES_DIR} -mindepth 1 -maxdepth 1 -delete"

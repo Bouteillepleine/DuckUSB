@@ -93,14 +93,23 @@ class MainActivity : AppCompatActivity() {
 
     private fun save() {
         val snapshot = config.copy()
-        val installed = moduleInstalled
         background {
+            val installed = moduleInstalled || Root.moduleInstalled()
             if (installed) {
-                Root.writeConfig(snapshot)
+                moduleInstalled = true
+                val written = Root.writeConfig(snapshot)
+                Root.syncPackages(snapshot)
                 Root.refreshDescription()
+                if (!written) runOnUiThread { toast("Could not write the module config") }
+            } else {
+                runOnUiThread { toast("Module not reachable, settings not saved") }
             }
             ServiceClient.push(this, snapshot)
         }
+    }
+
+    private fun toast(text: String) {
+        android.widget.Toast.makeText(this, text, android.widget.Toast.LENGTH_LONG).show()
     }
 
     // ------------------------------------------------------------------ render
@@ -331,7 +340,7 @@ class MainActivity : AppCompatActivity() {
         col.addView(ui.thinDivider())
         col.addView(ui.toggleRow(
             DuckUi.Icons.allApps, "Mask the USB function list",
-            "sys.usb.config and sys.usb.state read mtp inside scoped apps only, hiding the adb function itself. Done with a libc read hook, so the real property store keeps its value and system_server's USB manager is unaffected. USB adb keeps working.",
+            "sys.usb.config and sys.usb.state read mtp inside scoped apps only, via a libc read hook. The real store keeps its value, so USB adb keeps working. COST: the hook only exists where we inject, so turning this on adds the scoped apps to the injection list. Framework mode alone injects nothing.",
             config.spoofUsbState,
         ) {
             config.spoofUsbState = it
