@@ -39,10 +39,11 @@ masked_list() {
     [ -f "$MODDIR/disable_hooks" ] && return 1
     flag paused && return 1
     flag spoofProps || return 1
+    # sys.usb.config and sys.usb.state are deliberately NOT masked here. They are the live
+    # USB control surface: system_server's own UsbDeviceManager reads them and would believe
+    # the lie, drop the adb function and take USB adb down with it. spoofUsbState now hides
+    # them per-process instead, through the libc read hook armed in AppPart.
     LIST="persist.sys.usb.config=mtp init.svc.adbd=stopped"
-    # The live USB control surface, so it is opt-in: system_server's own UsbDeviceManager
-    # reads these too, and it will believe the lie.
-    flag spoofUsbState && LIST="$LIST sys.usb.config=mtp sys.usb.state=mtp"
     echo "$LIST"
     return 0
 }

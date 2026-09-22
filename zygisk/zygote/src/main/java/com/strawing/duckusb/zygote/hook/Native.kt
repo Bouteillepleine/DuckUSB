@@ -9,4 +9,6 @@ object Native {
     external fun hookMethod(target: Executable, hooker: Any, callback: Method): Method?
 
     external fun deoptimizeMethod(target: Executable): Boolean
+
+    external fun installPropHooks(names: Array<String>, values: Array<String>): Int
 }

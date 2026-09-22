@@ -46,6 +46,9 @@ object Config {
         "com.oplus.ota",
     )
 
+    const val PERSIST_USB_PROP = "persist.sys.usb.config"
+    const val PERSIST_USB_SAFE = "mtp"
+
     val PROP_OVERRIDES: Map<String, String> = mapOf(
         "sys.usb.config" to "mtp",
         "sys.usb.state" to "mtp",

@@ -331,7 +331,7 @@ class MainActivity : AppCompatActivity() {
         col.addView(ui.thinDivider())
         col.addView(ui.toggleRow(
             DuckUi.Icons.allApps, "Mask the USB function list",
-            "sys.usb.config and sys.usb.state read mtp, hiding the adb function itself. Closes detectors that read those directly. system_server's own USB manager believes it too, so leave it off unless you need it.",
+            "sys.usb.config and sys.usb.state read mtp inside scoped apps only, hiding the adb function itself. Done with a libc read hook, so the real property store keeps its value and system_server's USB manager is unaffected. USB adb keeps working.",
             config.spoofUsbState,
         ) {
             config.spoofUsbState = it

@@ -15,8 +15,13 @@ object ModuleConfig {
     var disabled = false
         private set
 
+    @Volatile
+    var moduleDir: String? = null
+        private set
+
     fun load(moduleDir: String?) {
         if (moduleDir == null) return
+        this.moduleDir = moduleDir
         disabled = runCatching { File(moduleDir, DISABLE_NAME).exists() }.getOrDefault(false)
         val text = runCatching { File(moduleDir, CONFIG_NAME).readText() }.getOrNull()
         config = DuckConfig.parse(text)

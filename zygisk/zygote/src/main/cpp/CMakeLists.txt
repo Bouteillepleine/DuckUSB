@@ -30,6 +30,7 @@ target_compile_options(xz PRIVATE -Wno-everything)
 
 add_library(duckusb SHARED
         lsplant_glue.cpp
+        prop_hook.cpp
         elf_img.cpp)
 
 target_include_directories(duckusb PRIVATE
