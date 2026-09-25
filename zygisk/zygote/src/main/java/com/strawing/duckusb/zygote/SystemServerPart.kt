@@ -4,6 +4,7 @@ import android.app.Notification
 import android.content.res.Resources
 import com.strawing.duckusb.common.Config
 import com.strawing.duckusb.zygote.hook.Frame
+import com.strawing.duckusb.zygote.hook.InitLock
 import com.strawing.duckusb.zygote.hook.XHook
 import com.strawing.duckusb.zygote.util.Logx
 import com.strawing.duckusb.zygote.util.ModuleConfig
@@ -48,22 +49,25 @@ object SystemServerPart {
             return
         }
         Thread.sleep(SETTLE_MS)
-        if (ModuleConfig.config.frameworkMode) {
-            runCatching { FrameworkPart.arm() }
-                .onFailure { Logx.e("framework mode failed to arm", it) }
+        val count = InitLock.serialized {
+            if (ModuleConfig.config.frameworkMode) {
+                runCatching { FrameworkPart.arm() }
+                    .onFailure { Logx.e("framework mode failed to arm", it) }
+            }
+            if (!ModuleConfig.config.hideNotif) return@serialized -1
+            val nms = XHook.findClass(NMS_CLASS, systemServerClassLoader()) ?: run {
+                Logx.e("NotificationManagerService not found")
+                return@serialized -1
+            }
+            var armed = 0
+            for (m in XHook.methodsOf(nms)) {
+                if (m.name != "enqueueNotificationInternal") continue
+                if (m.returnType != Void.TYPE) continue
+                if (XHook.hook(m, ::onEnqueue)) armed++
+            }
+            Logx.i("notification suppressor armed: $armed methods, strings=$adbStrings")
+            armed
         }
-        if (!ModuleConfig.config.hideNotif) return
-        val nms = XHook.findClass(NMS_CLASS, systemServerClassLoader()) ?: run {
-            Logx.e("NotificationManagerService not found")
-            return
-        }
-        var count = 0
-        for (m in XHook.methodsOf(nms)) {
-            if (m.name != "enqueueNotificationInternal") continue
-            if (m.returnType != Void.TYPE) continue
-            if (XHook.hook(m, ::onEnqueue)) count++
-        }
-        Logx.i("notification suppressor armed: $count methods, strings=$adbStrings")
         if (count > 0) sweepAlreadyPosted()
     }
 

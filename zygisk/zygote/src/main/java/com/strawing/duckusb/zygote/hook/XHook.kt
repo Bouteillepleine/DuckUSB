@@ -2,6 +2,7 @@ package com.strawing.duckusb.zygote.hook
 
 import com.strawing.duckusb.zygote.util.Logx
 import java.lang.reflect.Executable
+import java.lang.reflect.InvocationHandler
 import java.lang.reflect.Method
 import java.lang.reflect.Modifier
 
@@ -29,6 +30,11 @@ class Frame(
 
     fun arg(index: Int): Any? =
         if (index < 0 || index >= argCount) null else raw[offset + index]
+
+    fun setArg(index: Int, value: Any?) {
+        if (index < 0 || index >= argCount) return
+        raw[offset + index] = value
+    }
 
     val args: List<Any?>
         get() = (0 until argCount).map { arg(it) }
@@ -65,35 +71,128 @@ class Hooker(private val member: Executable, private val body: (Frame) -> Unit) 
     }
 }
 
+class Relay(private val callback: InvocationHandler) {
+    fun dispatch(args: Array<Any?>): Any? = callback.invoke(null, null, args)
+}
+
 object XHook {
+
+    private const val ENGINE_KEY = "duck.hook.engine"
 
     @Volatile
     private var ready = false
+
+    @Volatile
+    private var owns = false
+
+    @Volatile
+    private var adopted: InvocationHandler? = null
 
     private val callbackMethod: Method by lazy {
         Hooker::class.java.getDeclaredMethod("callback", Array<Any?>::class.java)
             .apply { isAccessible = true }
     }
 
+    private val relayMethod: Method by lazy {
+        Relay::class.java.getDeclaredMethod("dispatch", Array<Any?>::class.java)
+            .apply { isAccessible = true }
+    }
+
+    private val engine = InvocationHandler { _, method, args ->
+        val target = method as? Method
+        val callback = args?.getOrNull(0) as? InvocationHandler
+        if (target == null || callback == null) null else serve(target, callback)
+    }
+
+    fun engineMode(): String = when {
+        !ready -> "none"
+        owns -> "own"
+        else -> "adopted"
+    }
+
     fun prepare(): Boolean {
         if (ready) return true
-        ready = try {
-            Native.initHooking()
-        } catch (t: Throwable) {
-            Logx.e("native hooking unavailable", t)
-            false
+        return InitLock.serialized {
+            if (ready) return@serialized true
+            val existing = runCatching {
+                System.getProperties()[ENGINE_KEY] as? InvocationHandler
+            }.getOrNull()
+            if (existing != null) {
+                adopted = existing
+                ready = true
+                Logx.i("adopted the hook engine another module already started")
+                return@serialized true
+            }
+            val started = try {
+                Native.initHooking()
+            } catch (t: Throwable) {
+                Logx.e("native hooking unavailable", t)
+                false
+            }
+            if (started) {
+                owns = true
+                ready = true
+                runCatching { System.getProperties()[ENGINE_KEY] = engine }
+                    .onFailure { Logx.e("could not publish the hook engine", it) }
+                Logx.i("started the hook engine and published it")
+            } else {
+                Logx.e("the hook engine would not start")
+            }
+            started
         }
-        Logx.i("lsplant init: $ready")
-        return ready
+    }
+
+    private fun serve(target: Method, callback: InvocationHandler): Method? {
+        if (!owns) return null
+        return try {
+            val relay = Relay(callback)
+            val backup = Native.hookMethod(target, relay, relayMethod) ?: return null
+            backup.isAccessible = true
+            backup
+        } catch (t: Throwable) {
+            Logx.e("could not serve a hook on ${target.declaringClass.name}.${target.name}", t)
+            null
+        }
     }
 
     fun hook(target: Executable, body: (Frame) -> Unit): Boolean {
         if (!prepare()) return false
+        val borrowed = adopted
+        return if (borrowed != null) hookBorrowed(target, body, borrowed)
+        else hookOwn(target, body)
+    }
+
+    private fun hookOwn(target: Executable, body: (Frame) -> Unit): Boolean = try {
+        val hooker = Hooker(target, body)
+        val backup = Native.hookMethod(target, hooker, callbackMethod)
+        if (backup == null) {
+            Logx.e("hook refused on ${target.declaringClass.name}.${target.name}")
+            false
+        } else {
+            backup.isAccessible = true
+            hooker.backup = backup
+            true
+        }
+    } catch (t: Throwable) {
+        Logx.e("hook failed on ${target.declaringClass.name}.${target.name}", t)
+        false
+    }
+
+    private fun hookBorrowed(
+        target: Executable,
+        body: (Frame) -> Unit,
+        borrowed: InvocationHandler,
+    ): Boolean {
+        val method = target as? Method ?: return false
         return try {
             val hooker = Hooker(target, body)
-            val backup = Native.hookMethod(target, hooker, callbackMethod)
+            val callback = InvocationHandler { _, _, raw ->
+                @Suppress("UNCHECKED_CAST")
+                hooker.callback((raw ?: emptyArray()) as Array<Any?>)
+            }
+            val backup = borrowed.invoke(null, method, arrayOf<Any?>(callback)) as? Method
             if (backup == null) {
-                Logx.e("hook refused on ${target.declaringClass.name}.${target.name}")
+                Logx.e("the other module refused a hook on ${method.declaringClass.name}.${method.name}")
                 false
             } else {
                 backup.isAccessible = true
@@ -101,7 +200,7 @@ object XHook {
                 true
             }
         } catch (t: Throwable) {
-            Logx.e("hook failed on ${target.declaringClass.name}.${target.name}", t)
+            Logx.e("borrowed hook failed on ${method.declaringClass.name}.${method.name}", t)
             false
         }
     }

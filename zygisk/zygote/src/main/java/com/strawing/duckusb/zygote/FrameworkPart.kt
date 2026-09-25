@@ -9,6 +9,7 @@ import android.os.Bundle
 import android.util.SparseBooleanArray
 import com.strawing.duckusb.common.Bridge
 import com.strawing.duckusb.common.Config
+import com.strawing.duckusb.zygote.hook.BridgeRegistry
 import com.strawing.duckusb.zygote.hook.Frame
 import com.strawing.duckusb.zygote.hook.XHook
 import com.strawing.duckusb.zygote.service.DuckService
@@ -58,6 +59,11 @@ object FrameworkPart {
         }
         service?.hookCount = count
         service?.installedAtRealtimeMs = android.os.SystemClock.elapsedRealtime()
+        if (count > 0) {
+            BridgeRegistry.publish(Bridge.METHOD, ownBridge)
+        } else {
+            BridgeRegistry.registerWithOwner(Bridge.METHOD, ownBridge)
+        }
         Logx.i("framework mode armed: $count methods on ${provider.javaClass.name}")
     }
 
@@ -129,6 +135,18 @@ object FrameworkPart {
         null
     }
 
+    private val ownBridge = java.lang.reflect.InvocationHandler { _, _, args ->
+        val uid = args?.getOrNull(0) as? Int
+        val svc = service
+        if (uid == null || svc == null || svc.callerAppId < 0 ||
+            uid % Config.PER_USER_RANGE != svc.callerAppId
+        ) {
+            null
+        } else {
+            Bundle().apply { putBinder(Bridge.KEY_BINDER, svc) }
+        }
+    }
+
     private fun matchesBridge(args: List<Any?>): Boolean {
         for (i in 0 until args.size - 1) {
             if (args[i] == Bridge.METHOD && args[i + 1] == Bridge.ARG) return true
@@ -148,6 +166,13 @@ object FrameworkPart {
         ) {
             f.result = Bundle().apply { putBinder(Bridge.KEY_BINDER, svc) }
             return
+        }
+        if (uidNow != null) {
+            val foreign = BridgeRegistry.serve(f.args, uidNow)
+            if (foreign != null) {
+                f.result = foreign
+                return
+            }
         }
         f.proceed()
         try {
