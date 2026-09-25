@@ -10,6 +10,7 @@ import android.util.SparseBooleanArray
 import com.strawing.duckusb.common.Bridge
 import com.strawing.duckusb.common.Config
 import com.strawing.duckusb.zygote.hook.BridgeRegistry
+import com.strawing.duckusb.common.SpoofRegistry
 import com.strawing.duckusb.zygote.hook.Frame
 import com.strawing.duckusb.zygote.hook.XHook
 import com.strawing.duckusb.zygote.service.DuckService
@@ -27,6 +28,10 @@ object FrameworkPart {
 
     @Volatile
     var service: DuckService? = null
+        private set
+
+    @Volatile
+    var lent = false
         private set
 
     @Volatile
@@ -61,10 +66,12 @@ object FrameworkPart {
         service?.installedAtRealtimeMs = android.os.SystemClock.elapsedRealtime()
         if (count > 0) {
             BridgeRegistry.publish(Bridge.METHOD, ownBridge)
+            SpoofRegistry.publish()
         } else {
             BridgeRegistry.registerWithOwner(Bridge.METHOD, ownBridge)
+            lent = SpoofRegistry.registerWithOwner(Config.MODULE_ID, ownFilter)
         }
-        Logx.i("framework mode armed: $count methods on ${provider.javaClass.name}")
+        Logx.i("framework mode armed: $count methods on ${provider.javaClass.name}, lent=$lent")
     }
 
     private fun localProvider(): Any? {
@@ -175,29 +182,31 @@ object FrameworkPart {
             }
         }
         f.proceed()
-        try {
-            if (!spoofing()) return
-            val uid = callingUid() ?: return
-            val args = f.args
-            var key: String? = null
-            for (i in 0 until args.size - 1) {
-                val a = args[i]
-                if (a is String && a in Config.GET_METHODS) {
-                    key = args[i + 1] as? String
-                    break
-                }
+        val uid = callingUid() ?: return
+        runCatching { spoofCall(uid, f.args, f.result)?.let { f.result = it } }
+            .onFailure { Logx.e("framework call spoof failed", it) }
+        SpoofRegistry.apply(SpoofRegistry.CALL, uid, f.args, f.result)?.let { f.result = it }
+    }
+
+    fun spoofCall(uid: Int, args: List<Any?>, result: Any?): Any? {
+        if (!spoofing()) return null
+        var key: String? = null
+        for (i in 0 until args.size - 1) {
+            val a = args[i]
+            if (a is String && a in Config.GET_METHODS) {
+                key = args[i + 1] as? String
+                break
             }
-            if (key == null || key !in Config.SPOOF_KEYS) return
-            if (!isTarget(uid)) return
-            val bundle = f.result as? Bundle ?: return
-            if (!bundle.containsKey(Config.CALL_VALUE)) return
-            bundle.putString(Config.CALL_VALUE, "0")
-            bundle.putInt(Config.CALL_GENERATION_INDEX, -1)
-            service?.note(uid, key)
-            Logx.v { "framework spoofed $key for uid $uid" }
-        } catch (t: Throwable) {
-            Logx.e("framework call spoof failed", t)
         }
+        if (key == null || key !in Config.SPOOF_KEYS) return null
+        if (!isTarget(uid)) return null
+        val bundle = result as? Bundle ?: return null
+        if (!bundle.containsKey(Config.CALL_VALUE)) return null
+        bundle.putString(Config.CALL_VALUE, "0")
+        bundle.putInt(Config.CALL_GENERATION_INDEX, -1)
+        service?.note(uid, key)
+        Logx.v { "framework spoofed $key for uid $uid" }
+        return bundle
     }
 
     private fun onQuery(f: Frame) {
@@ -206,18 +215,33 @@ object FrameworkPart {
             Logx.i("framework query hook live")
         }
         f.proceed()
-        try {
-            if (!spoofing() || !ModuleConfig.config.coverQueryPath) return
-            val uid = callingUid() ?: return
-            if (!isTarget(uid)) return
-            val cursor = f.result as? Cursor ?: return
-            val uri = f.args.firstOrNull { it is Uri } as? Uri
-            val replaced = CursorSpoof.rewrite(cursor, uri?.lastPathSegment) ?: return
-            f.result = replaced
-            service?.note(uid, "query")
-            Logx.v { "framework spoofed a cursor for uid $uid" }
-        } catch (t: Throwable) {
-            Logx.e("framework query spoof failed", t)
+        val uid = callingUid() ?: return
+        runCatching { spoofQuery(uid, f.args, f.result)?.let { f.result = it } }
+            .onFailure { Logx.e("framework query spoof failed", it) }
+        SpoofRegistry.apply(SpoofRegistry.QUERY, uid, f.args, f.result)?.let { f.result = it }
+    }
+
+    fun spoofQuery(uid: Int, args: List<Any?>, result: Any?): Any? {
+        if (!spoofing() || !ModuleConfig.config.coverQueryPath) return null
+        if (!isTarget(uid)) return null
+        val cursor = result as? Cursor ?: return null
+        val uri = args.firstOrNull { it is Uri } as? Uri
+        val replaced = CursorSpoof.rewrite(cursor, uri?.lastPathSegment) ?: return null
+        service?.note(uid, "query")
+        Logx.v { "framework spoofed a cursor for uid $uid" }
+        return replaced
+    }
+
+    val ownFilter = java.lang.reflect.InvocationHandler { _, _, args ->
+        val kind = args?.getOrNull(0) as? String
+        val uid = args?.getOrNull(1) as? Int
+        val callArgs = (args?.getOrNull(2) as? Array<*>)?.toList() ?: emptyList<Any?>()
+        val result = args?.getOrNull(3)
+        when {
+            uid == null -> null
+            kind == SpoofRegistry.CALL -> spoofCall(uid, callArgs, result)
+            kind == SpoofRegistry.QUERY -> spoofQuery(uid, callArgs, result)
+            else -> null
         }
     }
 }

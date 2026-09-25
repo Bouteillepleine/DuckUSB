@@ -11,6 +11,7 @@ import android.os.Bundle
 import android.os.SystemClock
 import android.util.Log
 import com.strawing.duckusb.common.CursorSpoof
+import com.strawing.duckusb.common.SpoofRegistry
 import com.strawing.duckusb.service.Bridge
 import com.strawing.duckusb.service.DuckService
 import io.github.libxposed.api.XposedInterface
@@ -298,7 +299,10 @@ class DuckUSBModule : XposedModule() {
                 }
             } catch (_: Throwable) {}
         }
-        if (count > 0) settingsCallHooked = true
+        if (count > 0) {
+            settingsCallHooked = true
+            SpoofRegistry.publish()
+        }
         service?.hookCount = count
         service?.installedAtRealtimeMs = SystemClock.elapsedRealtime()
         logI("framework settings spoof installed: SettingsProvider.call hooks=$count")
@@ -329,7 +333,10 @@ class DuckUSBModule : XposedModule() {
             try {
                 spoofSettingsCall(uid, chain.args, result)
             } catch (_: Throwable) {}
-            result
+            val filtered =
+                if (uid != null) SpoofRegistry.apply(SpoofRegistry.CALL, uid, chain.args, result)
+                else null
+            filtered ?: result
         }
     }
 
@@ -351,7 +358,11 @@ class DuckUSBModule : XposedModule() {
                 }
             }
         } catch (_: Throwable) {}
-        replaced ?: result
+        val current = replaced ?: result
+        val filtered =
+            if (uid != null) SpoofRegistry.apply(SpoofRegistry.QUERY, uid, chain.args, current)
+            else null
+        filtered ?: current
     }
 
     private fun coverQueryOn() = prefs.getBoolean(Config.KEY_COVER_QUERY, true)
