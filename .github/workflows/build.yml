@@ -208,10 +208,18 @@ jobs:
           TAG="${GITHUB_REF_NAME}"
           VERSION="${TAG#xposed-v}"
           mv DuckUSB-xposed.apk "DuckUSB-${VERSION}.apk"
-          gh release create "$TAG" "DuckUSB-${VERSION}.apk" update.json \
-            --repo "$GITHUB_REPOSITORY" \
-            --title "Xposed ${VERSION}" \
-            --generate-notes
+          ASSETS=("DuckUSB-${VERSION}.apk" update.json)
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "::warning::$TAG already exists; replacing its assets."
+            gh release upload "$TAG" "${ASSETS[@]}" \
+              --repo "$GITHUB_REPOSITORY" \
+              --clobber
+          else
+            gh release create "$TAG" "${ASSETS[@]}" \
+              --repo "$GITHUB_REPOSITORY" \
+              --title "Xposed ${VERSION}" \
+              --generate-notes
+          fi
 
       - name: Publish to the Xposed module repository
         # LSPosed's manager does not read this repo. It reads
@@ -264,8 +272,15 @@ jobs:
           set -euo pipefail
           TAG="${GITHUB_REF_NAME}"
           VERSION="${TAG#zygisk-v}"
-          gh release create "$TAG" \
-            DuckUSB-Zygisk-*.zip DuckUSB-zygisk-manager.apk \
-            --repo "$GITHUB_REPOSITORY" \
-            --title "Zygisk ${VERSION}" \
-            --generate-notes
+          ASSETS=(DuckUSB-Zygisk-*.zip DuckUSB-zygisk-manager.apk)
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "::warning::$TAG already exists; replacing its assets."
+            gh release upload "$TAG" "${ASSETS[@]}" \
+              --repo "$GITHUB_REPOSITORY" \
+              --clobber
+          else
+            gh release create "$TAG" "${ASSETS[@]}" \
+              --repo "$GITHUB_REPOSITORY" \
+              --title "Zygisk ${VERSION}" \
+              --generate-notes
+          fi
