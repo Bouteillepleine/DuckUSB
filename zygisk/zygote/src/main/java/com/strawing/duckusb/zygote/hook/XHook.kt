@@ -77,7 +77,7 @@ class Relay(private val callback: InvocationHandler) {
 
 object XHook {
 
-    private const val ENGINE_KEY = "duck.hook.engine"
+    private const val ENGINE_KEY = "runtime.transform.engine"
 
     @Volatile
     private var ready = false

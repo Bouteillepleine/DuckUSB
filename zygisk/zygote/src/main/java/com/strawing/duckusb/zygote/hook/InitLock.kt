@@ -2,7 +2,7 @@ package com.strawing.duckusb.zygote.hook
 
 object InitLock {
 
-    private const val KEY = "duck.hook.init.monitor"
+    private const val KEY = "runtime.transform.monitor"
 
     private fun monitor(): Any {
         val props = System.getProperties()
