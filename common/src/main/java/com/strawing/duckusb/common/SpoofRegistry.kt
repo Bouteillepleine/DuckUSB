@@ -2,32 +2,59 @@ package com.strawing.duckusb.common
 
 import android.util.Log
 import java.lang.reflect.InvocationHandler
+import java.lang.reflect.Proxy
 import java.util.concurrent.ConcurrentHashMap
 
 object SpoofRegistry {
 
     private const val TAG = "DuckUSB"
-    private const val KEY = "duck.hook.settings.filter"
+    private const val KEY = "provider.filter.registry"
 
     const val CALL = "call"
     const val QUERY = "query"
 
     private val filters = ConcurrentHashMap<String, InvocationHandler>()
 
-    private val registry = InvocationHandler { _, _, args ->
-        val name = args?.getOrNull(0) as? String
-        val handler = args?.getOrNull(1) as? InvocationHandler
-        if (name == null || handler == null) {
-            false
-        } else {
-            filters[name] = handler
-            Log.i(TAG, "registered the settings filter of $name")
-            true
+    private val registry = InvocationHandler { proxy, method, args ->
+        when (method?.name) {
+            "hashCode" -> System.identityHashCode(proxy)
+            "equals" -> proxy === args?.getOrNull(0)
+            "toString" -> "java.lang.Object@" + Integer.toHexString(System.identityHashCode(proxy))
+            else -> {
+                val call = unwrap(args)
+                val name = call.getOrNull(0) as? String
+                val handler = call.getOrNull(1) as? InvocationHandler
+                if (name == null || handler == null) {
+                    false
+                } else {
+                    filters[name] = handler
+                    Log.i(TAG, "registered the settings filter of $name")
+                    true
+                }
+            }
         }
     }
 
+    private val published: InvocationHandler by lazy {
+        for (loader in listOf(InvocationHandler::class.java.classLoader, SpoofRegistry::class.java.classLoader)) {
+            val proxy = runCatching {
+                Proxy.newProxyInstance(
+                    loader, arrayOf(InvocationHandler::class.java), registry
+                ) as InvocationHandler
+            }.getOrNull()
+            if (proxy != null) return@lazy proxy
+        }
+        registry
+    }
+
+    private fun unwrap(args: Array<out Any?>?): List<Any?> {
+        if (args == null) return emptyList()
+        val nested = args.getOrNull(2) as? Array<*>
+        return nested?.toList() ?: args.toList()
+    }
+
     fun publish() {
-        runCatching { System.getProperties()[KEY] = registry }
+        runCatching { System.getProperties()[KEY] = published }
             .onFailure { Log.e(TAG, "could not publish the settings filter registry", it) }
     }
 
@@ -35,7 +62,7 @@ object SpoofRegistry {
         val owner = runCatching {
             System.getProperties()[KEY] as? InvocationHandler
         }.getOrNull()
-        if (owner == null || owner === registry) return false
+        if (owner == null || owner === published || owner === registry) return false
         val ok = runCatching {
             owner.invoke(null, null, arrayOf<Any?>(name, handler)) == true
         }.getOrDefault(false)
