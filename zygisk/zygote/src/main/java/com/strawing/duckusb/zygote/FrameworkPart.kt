@@ -190,22 +190,43 @@ object FrameworkPart {
 
     fun spoofCall(uid: Int, args: List<Any?>, result: Any?): Any? {
         if (!spoofing()) return null
+        var method: String? = null
         var key: String? = null
-        for (i in 0 until args.size - 1) {
+        for (i in args.indices) {
             val a = args[i]
-            if (a is String && a in Config.GET_METHODS) {
-                key = args[i + 1] as? String
+            if (a is String && (a in Config.GET_METHODS || a in Config.LIST_METHODS)) {
+                method = a
+                key = args.getOrNull(i + 1) as? String
                 break
             }
         }
-        if (key == null || key !in Config.SPOOF_KEYS) return null
+        if (method == null) return null
         if (!isTarget(uid)) return null
         val bundle = result as? Bundle ?: return null
+        if (method in Config.LIST_METHODS) return spoofSettingsList(uid, bundle)
+        if (key == null || key !in Config.SPOOF_KEYS) return null
         if (!bundle.containsKey(Config.CALL_VALUE)) return null
         bundle.putString(Config.CALL_VALUE, "0")
         bundle.putInt(Config.CALL_GENERATION_INDEX, -1)
         service?.note(uid, key)
         Logx.v { "framework spoofed $key for uid $uid" }
+        return bundle
+    }
+
+    private fun spoofSettingsList(uid: Int, bundle: Bundle): Any? {
+        val entries = bundle.getStringArrayList(Config.CALL_SETTINGS_LIST) ?: return null
+        var hit = false
+        for (i in entries.indices) {
+            val entry = entries[i] ?: continue
+            val sep = entry.indexOf('=')
+            if (sep <= 0 || entry.substring(0, sep) !in Config.SPOOF_KEYS) continue
+            entries[i] = entry.substring(0, sep + 1) + "0"
+            hit = true
+        }
+        if (!hit) return null
+        bundle.putStringArrayList(Config.CALL_SETTINGS_LIST, entries)
+        service?.note(uid, "list")
+        Logx.v { "framework spoofed a settings list for uid $uid" }
         return bundle
     }
 

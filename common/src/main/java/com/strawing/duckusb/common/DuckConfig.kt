@@ -11,7 +11,6 @@ data class DuckConfig(
     var hideNotif: Boolean = true,
     var coverQueryPath: Boolean = true,
     var verboseLog: Boolean = false,
-    var hookGetters: Boolean = false,
     var hookSystemServer: Boolean = false,
     var frameworkMode: Boolean = false,
     var frameworkAllApps: Boolean = false,
@@ -35,7 +34,6 @@ data class DuckConfig(
         o.put(KEY_HIDE_NOTIF, hideNotif)
         o.put(KEY_COVER_QUERY, coverQueryPath)
         o.put(KEY_VERBOSE, verboseLog)
-        o.put(KEY_HOOK_GETTERS, hookGetters)
         o.put(KEY_HOOK_SYSTEM_SERVER, hookSystemServer)
         o.put(KEY_FRAMEWORK_MODE, frameworkMode)
         o.put(KEY_FRAMEWORK_ALL_APPS, frameworkAllApps)
@@ -54,7 +52,6 @@ data class DuckConfig(
         private const val KEY_HIDE_NOTIF = "hideNotif"
         private const val KEY_COVER_QUERY = "coverQueryPath"
         private const val KEY_VERBOSE = "verboseLog"
-        private const val KEY_HOOK_GETTERS = "hookGetters"
         private const val KEY_HOOK_SYSTEM_SERVER = "hookSystemServer"
         private const val KEY_FRAMEWORK_MODE = "frameworkMode"
         private const val KEY_FRAMEWORK_ALL_APPS = "frameworkAllApps"
@@ -78,7 +75,6 @@ data class DuckConfig(
                     hideNotif = o.optBoolean(KEY_HIDE_NOTIF, true),
                     coverQueryPath = o.optBoolean(KEY_COVER_QUERY, true),
                     verboseLog = o.optBoolean(KEY_VERBOSE, false),
-                    hookGetters = o.optBoolean(KEY_HOOK_GETTERS, false),
                     hookSystemServer = o.optBoolean(KEY_HOOK_SYSTEM_SERVER, false),
                     frameworkMode = o.optBoolean(KEY_FRAMEWORK_MODE, false),
                     frameworkAllApps = o.optBoolean(KEY_FRAMEWORK_ALL_APPS, false),

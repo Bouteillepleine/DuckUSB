@@ -19,39 +19,7 @@ import io.github.libxposed.api.XposedModule
 import io.github.libxposed.api.XposedModuleInterface.ModuleLoadedParam
 import io.github.libxposed.api.XposedModuleInterface.PackageReadyParam
 import io.github.libxposed.api.XposedModuleInterface.SystemServerStartingParam
-import java.lang.reflect.Method
 
-/**
- * DuckUSB — two independent tricks:
- *
- *  A) SETTINGS SPOOF (per detector app). Makes scoped apps read USB debugging,
- *     wireless debugging and Developer Options as OFF while they stay really ON,
- *     by hooking the static getters on Settings.Global / Settings.Secure. Runs in
- *     every scoped app EXCEPT the core OS packages (so adbd / the Settings toggle
- *     itself are never lied to).
- *
- *  A2) PROPERTY SPOOF (automatic). In the same scoped app processes, sys.usb.* and
- *     init.svc.adbd are spoofed too, via SystemProperties and a native libc hook. Not
- *     user-switchable: scoping an app already states the intent, and it must never reach a
- *     system process — see the UID guard in [onPackageReady].
- *
- *  B) NOTIFICATION SUPPRESSOR (System Framework / System UI). Hides the persistent
- *     "USB debugging enabled / Débogage USB activé" notification. That notification
- *     is posted by system_server, so this half deliberately DOES run in system_server
- *     and com.android.systemui — the ones the spoof half skips.
- *
- * Scope both halves in LSPosed:
- *   - tick your detector apps (banking, Intune, games…) for the spoof, and
- *   - tick "System Framework" + "System UI" to kill the notification.
- *
- * ── libxposed (modern API 101) ─────────────────────────────────────────────────────────
- * The legacy `handleLoadPackage` fired once per package hosted in a process, which meant this
- * class had to work out from a package name whether it was standing in system_server. The
- * modern API splits that apart: [onSystemServerStarting] IS the system_server entry and
- * [onPackageReady] is the per-app one, so the "is this really system_server?" guesswork is
- * gone. The UID and process guards are kept anyway — they defend against a different thing
- * (OEM plugins riding an app uid), which the split does not address.
- */
 class DuckUSBModule : XposedModule() {
 
     companion object {
@@ -64,37 +32,13 @@ class DuckUSBModule : XposedModule() {
             "development_settings_enabled"  // Developer Options master toggle
         )
 
-        /**
-         * Core *processes* we never spoof inside. Guarding on package name alone is not enough:
-         * OEM plugins load into com.android.systemui under their own package names at an app
-         * uid (10178 on OPlus), which no package-name list catches.
-         */
-        private val SKIP_SPOOF_PROCESSES = setOf(
-            "android",
-            "system",
-            "com.android.systemui",
-            "com.android.settings",
-            "com.android.shell",
-            "com.android.phone",
-        )
-
-        /** Core packages the SETTINGS SPOOF never touches (the notif suppressor still may). */
-        private val SKIP_SPOOF_PACKAGES = setOf(
-            "android",
-            "com.android.settings",
-            "com.android.systemui",
-            "com.android.shell",
-            "com.android.phone"
-        )
-
-        /** Static getters that take a String key we can inspect. */
-        private val GETTERS = arrayOf("getInt", "getString", "getLong", "getFloat")
-
         /** First application UID; anything below (root/system/shell) is never lied to. */
         private const val FIRST_APP_UID = 10000
 
         /** SettingsProvider.call methods that fetch a value we may want to spoof. */
         private val GET_METHODS = setOf("GET_global", "GET_secure")
+
+        private val LIST_METHODS = setOf("LIST_global", "LIST_secure", "LIST_system")
 
         /** The concrete settings provider we hook (never the generic ContentProvider$Transport). */
         private const val SETTINGS_PROVIDER = "com.android.providers.settings.SettingsProvider"
@@ -105,6 +49,7 @@ class DuckUSBModule : XposedModule() {
         /** Bundle keys used by the settings-provider call protocol. */
         private const val CALL_VALUE = "value"                 // Settings.NameValueTable.VALUE
         private const val CALL_GENERATION_INDEX = "_generation_index" // CALL_METHOD_GENERATION_INDEX_KEY
+        private const val CALL_SETTINGS_LIST = "result_settings_list"
 
         /** Notification channels the ADB notifications live on (AOSP). */
         private val ADB_CHANNELS = setOf("DEVELOPER", "DEVELOPER_IMPORTANT")
@@ -139,13 +84,6 @@ class DuckUSBModule : XposedModule() {
     private fun spoofOn() = prefs.getBoolean(Config.KEY_SPOOF, true)
 
     private fun hideNotifOn() = prefs.getBoolean(Config.KEY_HIDE_NOTIF, true)
-
-    /**
-     * Framework mode is EXPERIMENTAL and OFF by default: on some ROMs (verified OP15 /
-     * Android 16) hooking ContentProvider$Transport.call in system_server bootloops the
-     * device. The per-app client hook is the safe default.
-     */
-
 
     private fun logI(msg: String) = log(Log.INFO, TAG, msg)
 
@@ -212,21 +150,15 @@ class DuckUSBModule : XposedModule() {
      */
     override fun onPackageReady(param: PackageReadyParam) {
         val pkg = param.packageName
-        val cl = param.classLoader
-        val myUid = android.os.Process.myUid()
 
         if (verboseOn()) {
-            logI("package pkg=$pkg proc=$processName uid=$myUid " +
-                "skipList=${pkg in SKIP_SPOOF_PACKAGES} systemUid=${myUid % 100000 < FIRST_APP_UID}")
+            logI("package pkg=$pkg proc=$processName uid=${android.os.Process.myUid()}")
         }
 
-        // B) Notification suppressor — System UI is the other place the ADB notification can
-        //    surface. (system_server is handled in onSystemServerStarting.)
-        if (pkg == "com.android.systemui" && hideNotifOn()) installNotificationSuppressor(cl)
-
+        if (pkg == "com.android.systemui" && hideNotifOn()) {
+            installNotificationSuppressor(param.classLoader)
+        }
     }
-
-    // ============================ A) SETTINGS SPOOF ============================
 
     // ================= FRAMEWORK-MODE SETTINGS SPOOF (system_server) =================
 
@@ -391,15 +323,19 @@ class DuckUSBModule : XposedModule() {
 
         // The setting key always immediately follows the GET_* method arg, whatever the
         // SettingsProvider.call signature is on this Android version.
+        var method: String? = null
         var key: String? = null
-        for (i in 0 until args.size - 1) {
+        for (i in args.indices) {
             val a = args[i]
-            if (a is String && a in GET_METHODS) {
-                key = args[i + 1] as? String
+            if (a is String && (a in GET_METHODS || a in LIST_METHODS)) {
+                method = a
+                key = args.getOrNull(i + 1) as? String
                 break
             }
         }
-        if (key == null || key !in SPOOF_KEYS) return
+        if (method == null) return
+        val listing = method in LIST_METHODS
+        if (!listing && (key == null || key !in SPOOF_KEYS)) return
         // Never lie to the OS's own file-transfer plumbing: com.android.mtp and friends sit at
         // app uids, so the uid<10000 rule above does not cover them, and spoofing them at boot
         // leaves USB stuck on charge-only.
@@ -409,16 +345,36 @@ class DuckUSBModule : XposedModule() {
         if (!(service?.spoofSettings ?: spoofOn())) return
 
         val bundle = result as? Bundle ?: return
+        if (listing) {
+            spoofSettingsList(uid, bundle)
+            return
+        }
+        val name = key ?: return
         if (bundle.containsKey(CALL_VALUE)) {
             bundle.putString(CALL_VALUE, "0")
-            service?.note(uid, key)
+            service?.note(uid, name)
             // Make the client NameValueCache treat this as uncacheable (-1) so our hook runs on
             // every read instead of a stale real value being served from cache.
             bundle.putInt(CALL_GENERATION_INDEX, -1)
         }
     }
 
-    // ========================= B) NOTIFICATION SUPPRESSOR =========================
+    private fun spoofSettingsList(uid: Int, bundle: Bundle) {
+        val entries = bundle.getStringArrayList(CALL_SETTINGS_LIST) ?: return
+        var hit = false
+        for (i in entries.indices) {
+            val entry = entries[i] ?: continue
+            val sep = entry.indexOf('=')
+            if (sep <= 0 || entry.substring(0, sep) !in SPOOF_KEYS) continue
+            entries[i] = entry.substring(0, sep + 1) + "0"
+            hit = true
+        }
+        if (!hit) return
+        bundle.putStringArrayList(CALL_SETTINGS_LIST, entries)
+        service?.note(uid, "list")
+    }
+
+    // ========================= NOTIFICATION SUPPRESSOR =========================
 
     /** Hook the public wrapper UsbDeviceManager uses: NotificationManager.notify* . */
     private fun installNotificationSuppressor(cl: ClassLoader) {

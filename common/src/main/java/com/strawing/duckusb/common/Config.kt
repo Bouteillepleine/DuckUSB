@@ -26,15 +26,6 @@ object Config {
         "development_settings_enabled",
     )
 
-    val SKIP_SPOOF_PROCESSES = setOf(
-        "android",
-        "system",
-        "com.android.systemui",
-        "com.android.settings",
-        "com.android.shell",
-        "com.android.phone",
-    )
-
     val SPARE_PACKAGES: Set<String> = setOf(
         "com.strawing.duckusb",
         "com.android.mtp",
@@ -60,6 +51,7 @@ object Config {
     const val SETTINGS_AUTHORITY = "settings"
     const val CALL_VALUE = "value"
     const val CALL_GENERATION_INDEX = "_generation_index"
+    const val CALL_SETTINGS_LIST = "result_settings_list"
 
     val GET_METHODS = setOf("GET_global", "GET_secure", "GET_system")
     val LIST_METHODS = setOf("LIST_global", "LIST_secure", "LIST_system")
