@@ -1,14 +1,11 @@
-<vector xmlns:android="http://schemas.android.com/apk/res/android"
-    android:width="108dp"
-    android:height="108dp"
-    android:viewportWidth="108"
-    android:viewportHeight="108">
-    <!-- shield -->
-    <path
-        android:fillColor="#FFFFFF"
-        android:pathData="M54,28 L74,36 L74,54 C74,66 65,74 54,80 C43,74 34,66 34,54 L34,36 Z" />
-    <!-- slash (bypass) -->
-    <path
-        android:fillColor="#1F6FEB"
-        android:pathData="M40,44 L68,68 L64,72 L36,48 Z" />
-</vector>
+<?xml version="1.0" encoding="utf-8"?>
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:drawable="@drawable/ic_launcher_glyph" />
+    <item
+        android:drawable="@drawable/ic_duck"
+        android:gravity="top|left"
+        android:width="25dp"
+        android:height="25dp"
+        android:left="54.5dp"
+        android:top="52.5dp" />
+</layer-list>
