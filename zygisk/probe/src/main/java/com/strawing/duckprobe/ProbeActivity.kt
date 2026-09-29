@@ -15,7 +15,14 @@ private const val TAG = "DuckProbe"
 
 class Probe(private val resolver: ContentResolver) {
 
-    private val keys = listOf("adb_enabled", "adb_wifi_enabled", "development_settings_enabled")
+    private val keys = listOf(
+        "adb_enabled",
+        "adb_wifi_enabled",
+        "development_settings_enabled",
+        "adb_allowed_connection_time",
+        "verifier_verify_adb_installs",
+        "stay_on_while_plugged_in"
+    )
     private val props = listOf("sys.usb.config", "sys.usb.state", "init.svc.adbd", "persist.sys.usb.config")
 
     fun run() {

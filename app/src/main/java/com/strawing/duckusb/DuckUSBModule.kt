@@ -10,6 +10,7 @@ import android.os.Binder
 import android.os.Bundle
 import android.os.SystemClock
 import android.util.Log
+import com.strawing.duckusb.common.Config as CommonConfig
 import com.strawing.duckusb.common.CursorSpoof
 import com.strawing.duckusb.common.SpoofRegistry
 import com.strawing.duckusb.service.Bridge
@@ -25,12 +26,15 @@ class DuckUSBModule : XposedModule() {
     companion object {
         private const val TAG = "DuckUSB"
 
-        /** Setting keys we force to the "disabled" value. */
-        private val SPOOF_KEYS = setOf(
-            "adb_enabled",                  // Settings.Global.ADB_ENABLED — USB debugging
-            "adb_wifi_enabled",             // wireless / ADB-over-Wi-Fi
-            "development_settings_enabled"  // Developer Options master toggle
-        )
+        /**
+         * Setting keys we rewrite, each mapped to the value a stock device reports. Shared with
+         * the Zygisk variant and with CursorSpoof, which this class also calls — keeping one
+         * source of truth is what stops the call path and the cursor path spoofing different
+         * key sets.
+         */
+        private val SPOOF_VALUES = CommonConfig.SPOOF_VALUES
+
+        private val SPOOF_KEYS: Set<String> = CommonConfig.SPOOF_KEYS
 
         /** First application UID; anything below (root/system/shell) is never lied to. */
         private const val FIRST_APP_UID = 10000
@@ -351,7 +355,7 @@ class DuckUSBModule : XposedModule() {
         }
         val name = key ?: return
         if (bundle.containsKey(CALL_VALUE)) {
-            bundle.putString(CALL_VALUE, "0")
+            bundle.putString(CALL_VALUE, SPOOF_VALUES[name] ?: "0")
             service?.note(uid, name)
             // Make the client NameValueCache treat this as uncacheable (-1) so our hook runs on
             // every read instead of a stale real value being served from cache.
@@ -365,8 +369,9 @@ class DuckUSBModule : XposedModule() {
         for (i in entries.indices) {
             val entry = entries[i] ?: continue
             val sep = entry.indexOf('=')
-            if (sep <= 0 || entry.substring(0, sep) !in SPOOF_KEYS) continue
-            entries[i] = entry.substring(0, sep + 1) + "0"
+            if (sep <= 0) continue
+            val spoofed = SPOOF_VALUES[entry.substring(0, sep)] ?: continue
+            entries[i] = entry.substring(0, sep + 1) + spoofed
             hit = true
         }
         if (!hit) return

@@ -397,6 +397,9 @@ class MainActivity : AppCompatActivity() {
             "development_settings_enabled" -> "dev"
             "adb_wifi_enabled" -> "adb_wifi"
             "adb_enabled" -> "adb"
+            "adb_allowed_connection_time" -> "adb_timeout"
+            "verifier_verify_adb_installs" -> "adb_verify"
+            "stay_on_while_plugged_in" -> "stay_awake"
             else -> it
         }
     }

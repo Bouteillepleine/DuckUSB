@@ -29,8 +29,9 @@ object CursorSpoof {
                 }
             }
             val name = if (nameIdx >= 0) row[nameIdx] as? String else fallbackKey
-            if (name != null && name in Config.SPOOF_KEYS) {
-                row[valueIdx] = "0"
+            val spoofed = if (name != null) Config.SPOOF_VALUES[name] else null
+            if (spoofed != null) {
+                row[valueIdx] = spoofed
                 hit = true
             }
             rows.add(row)

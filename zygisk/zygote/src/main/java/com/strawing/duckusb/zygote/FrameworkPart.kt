@@ -204,9 +204,10 @@ object FrameworkPart {
         if (!isTarget(uid)) return null
         val bundle = result as? Bundle ?: return null
         if (method in Config.LIST_METHODS) return spoofSettingsList(uid, bundle)
-        if (key == null || key !in Config.SPOOF_KEYS) return null
+        if (key == null) return null
+        val spoofed = Config.SPOOF_VALUES[key] ?: return null
         if (!bundle.containsKey(Config.CALL_VALUE)) return null
-        bundle.putString(Config.CALL_VALUE, "0")
+        bundle.putString(Config.CALL_VALUE, spoofed)
         bundle.putInt(Config.CALL_GENERATION_INDEX, -1)
         service?.note(uid, key)
         Logx.v { "framework spoofed $key for uid $uid" }
@@ -219,8 +220,9 @@ object FrameworkPart {
         for (i in entries.indices) {
             val entry = entries[i] ?: continue
             val sep = entry.indexOf('=')
-            if (sep <= 0 || entry.substring(0, sep) !in Config.SPOOF_KEYS) continue
-            entries[i] = entry.substring(0, sep + 1) + "0"
+            if (sep <= 0) continue
+            val spoofed = Config.SPOOF_VALUES[entry.substring(0, sep)] ?: continue
+            entries[i] = entry.substring(0, sep + 1) + spoofed
             hit = true
         }
         if (!hit) return null

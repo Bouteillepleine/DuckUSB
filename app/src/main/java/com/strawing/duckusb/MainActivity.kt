@@ -23,8 +23,7 @@ class MainActivity : AppCompatActivity() {
         const val STATE_TAB = "tab"
         val PROP_KEYS =
             listOf("persist.sys.usb.config", "sys.usb.state", "sys.usb.config", "init.svc.adbd")
-        val SETTING_KEYS =
-            listOf("adb_enabled", "adb_wifi_enabled", "development_settings_enabled")
+        val SETTING_KEYS = com.strawing.duckusb.common.Config.SPOOF_KEYS.toList()
     }
 
     private lateinit var prefs: SharedPreferences
@@ -388,6 +387,9 @@ class MainActivity : AppCompatActivity() {
                 "development_settings_enabled" -> "dev"
                 "adb_wifi_enabled" -> "adb_wifi"
                 "adb_enabled" -> "adb"
+                "adb_allowed_connection_time" -> "adb_timeout"
+                "verifier_verify_adb_installs" -> "adb_verify"
+                "stay_on_while_plugged_in" -> "stay_awake"
                 else -> it
             }
         }
