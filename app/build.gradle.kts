@@ -30,8 +30,8 @@ android {
         applicationId = "com.strawing.duckusb"
         minSdk = 26
         targetSdk = 35
-        versionCode = 26
-        versionName = "2.1.3"
+        versionCode = 29
+        versionName = "2.1.6"
         vectorDrawables { useSupportLibrary = true }
     }
 
