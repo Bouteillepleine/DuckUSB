@@ -10,6 +10,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <map>
 #include <vector>
 
 extern "C" {
@@ -23,7 +24,9 @@ using Elf_Shdr = ElfW(Shdr);
 using Elf_Sym = ElfW(Sym);
 using Elf_Phdr = ElfW(Phdr);
 
-static std::vector<uint8_t> inflate(const uint8_t *in, size_t in_size) {
+namespace {
+
+std::vector<uint8_t> inflate(const uint8_t *in, size_t in_size) {
     static bool crc_ready = false;
     if (!crc_ready) {
         xz_crc32_init();
@@ -56,28 +59,100 @@ static std::vector<uint8_t> inflate(const uint8_t *in, size_t in_size) {
     return {};
 }
 
-ElfImg::ElfImg(std::string_view base_name) : name_(base_name) {
-    FILE *maps = fopen("/proc/self/maps", "r");
-    if (maps == nullptr) return;
+const char *basename_of(const char *path) {
+    const char *slash = strrchr(path, '/');
+    return slash != nullptr ? slash + 1 : path;
+}
 
+struct LoadedQuery {
+    const char *name;
+    uintptr_t bias;
+    uintptr_t base;
+    std::string path;
+    bool found;
+};
+
+int match_loaded(dl_phdr_info *info, size_t, void *data) {
+    auto *query = static_cast<LoadedQuery *>(data);
+    if (info->dlpi_name == nullptr || info->dlpi_name[0] == '\0') return 0;
+    if (strcmp(basename_of(info->dlpi_name), query->name) != 0) return 0;
+
+    uintptr_t first = static_cast<uintptr_t>(-1);
+    for (int i = 0; i < info->dlpi_phnum; i++) {
+        const auto &program = info->dlpi_phdr[i];
+        if (program.p_type == PT_LOAD && program.p_vaddr < first) first = program.p_vaddr;
+    }
+    if (first == static_cast<uintptr_t>(-1)) return 0;
+
+    query->bias = static_cast<uintptr_t>(info->dlpi_addr);
+    query->base = query->bias + first;
+    query->path = info->dlpi_name;
+    query->found = true;
+    return 1;
+}
+
+struct MapGroup {
+    uintptr_t lowest = static_cast<uintptr_t>(-1);
+    bool writable = false;
+    std::string path;
+};
+
+}  // namespace
+
+// The loaded library, never a plain read-only mapping of the same file: other
+// modules leave whole-file parse mappings of libart.so behind, and adopting one
+// as the load base sends every resolved symbol into dead memory.
+bool ElfImg::resolveLoaded() {
+    LoadedQuery query{name_.c_str(), 0, 0, {}, false};
+    dl_iterate_phdr(match_loaded, &query);
+    if (!query.found) return false;
+    bias_ = query.bias;
+    base_ = reinterpret_cast<void *>(query.base);
+    path_ = std::move(query.path);
+    return true;
+}
+
+bool ElfImg::resolveFromMaps() {
+    FILE *maps = fopen("/proc/self/maps", "r");
+    if (maps == nullptr) return false;
+
+    // A mapping group is keyed by the load base it implies; only a loaded
+    // library ever carries a writable segment.
+    std::map<uintptr_t, MapGroup> groups;
     char line[1024];
     while (fgets(line, sizeof(line), maps) != nullptr) {
-        if (strstr(line, name_.c_str()) == nullptr) continue;
         char *path = strchr(line, '/');
         if (path == nullptr) continue;
         char *newline = strchr(path, '\n');
         if (newline != nullptr) *newline = '\0';
+        if (strcmp(basename_of(path), name_.c_str()) != 0) continue;
 
         uintptr_t start = strtoul(line, nullptr, 16);
-        if (base_ == nullptr) {
-            base_ = reinterpret_cast<void *>(start);
-            path_ = path;
-        }
+        char *cursor = strchr(line, ' ');
+        if (cursor == nullptr || strlen(cursor + 1) < 4) continue;
+        const char *perms = cursor + 1;
+        uintptr_t offset = strtoul(perms + 5, nullptr, 16);
+        if (offset > start) continue;
+
+        auto &group = groups[start - offset];
+        if (start < group.lowest) group.lowest = start;
+        if (perms[1] == 'w') group.writable = true;
+        if (group.path.empty()) group.path = path;
     }
     fclose(maps);
 
-    if (base_ == nullptr || path_.empty()) {
-        LOGD("ElfImg: %s not mapped", name_.c_str());
+    for (const auto &[base, group]: groups) {
+        if (!group.writable) continue;
+        base_ = reinterpret_cast<void *>(base);
+        path_ = group.path;
+        return true;
+    }
+    return false;
+}
+
+ElfImg::ElfImg(std::string_view base_name) : name_(base_name) {
+    if (!resolveLoaded() && !resolveFromMaps()) {
+        LOGD("ElfImg: %s not loaded", name_.c_str());
         return;
     }
 
@@ -100,9 +175,10 @@ ElfImg::ElfImg(std::string_view base_name) : name_(base_name) {
     }
 
     parse();
+    release();
 }
 
-void ElfImg::collect(const char *image, bool keep_strings) {
+void ElfImg::collect(const char *image) {
     auto *header = reinterpret_cast<const Elf_Ehdr *>(image);
     if (memcmp(header->e_ident, ELFMAG, SELFMAG) != 0) return;
 
@@ -119,13 +195,8 @@ void ElfImg::collect(const char *image, bool keep_strings) {
         for (size_t s = 0; s < count; s++) {
             const auto &symbol = symbols[s];
             if (symbol.st_name == 0 || symbol.st_value == 0) continue;
-            const char *raw = strings + symbol.st_name;
-            if (keep_strings) {
-                owned_.emplace_back(raw);
-                symbols_.emplace(owned_.back(), static_cast<uintptr_t>(symbol.st_value));
-            } else {
-                symbols_.emplace(std::string_view(raw), static_cast<uintptr_t>(symbol.st_value));
-            }
+            owned_.emplace_back(strings + symbol.st_name);
+            symbols_.emplace(owned_.back(), static_cast<uintptr_t>(symbol.st_value));
         }
     }
 }
@@ -133,21 +204,22 @@ void ElfImg::collect(const char *image, bool keep_strings) {
 void ElfImg::parse() {
     auto *header = reinterpret_cast<Elf_Ehdr *>(elf_);
     if (memcmp(header->e_ident, ELFMAG, SELFMAG) != 0) return;
-    header_ = header;
 
-    for (int i = 0; i < header->e_phnum; i++) {
-        auto *program = reinterpret_cast<Elf_Phdr *>(
-                elf_ + header->e_phoff + header->e_phentsize * i);
-        if (program->p_type == PT_LOAD && program->p_offset == 0) {
-            bias_ = reinterpret_cast<uintptr_t>(base_) - program->p_vaddr;
-            break;
+    if (bias_ == static_cast<uintptr_t>(-1)) {
+        for (int i = 0; i < header->e_phnum; i++) {
+            auto *program = reinterpret_cast<Elf_Phdr *>(
+                    elf_ + header->e_phoff + header->e_phentsize * i);
+            if (program->p_type == PT_LOAD && program->p_offset == 0) {
+                bias_ = reinterpret_cast<uintptr_t>(base_) - program->p_vaddr;
+                break;
+            }
+        }
+        if (bias_ == static_cast<uintptr_t>(-1)) {
+            bias_ = reinterpret_cast<uintptr_t>(base_);
         }
     }
-    if (bias_ == static_cast<uintptr_t>(-1)) {
-        bias_ = reinterpret_cast<uintptr_t>(base_);
-    }
 
-    collect(elf_, false);
+    collect(elf_);
 
     auto *sections = reinterpret_cast<Elf_Shdr *>(elf_ + header->e_shoff);
     auto *section_names = elf_ + sections[header->e_shstrndx].sh_offset;
@@ -157,13 +229,22 @@ void ElfImg::parse() {
         auto data = inflate(reinterpret_cast<const uint8_t *>(elf_ + section.sh_offset),
                             section.sh_size);
         if (data.empty()) break;
-        debug_ = std::move(data);
-        collect(reinterpret_cast<const char *>(debug_.data()), true);
+        collect(reinterpret_cast<const char *>(data.data()));
         break;
     }
 
-    LOGD("ElfImg: %s parsed, %zu symbols, debugdata %zu bytes, bias %p",
-         name_.c_str(), symbols_.size(), debug_.size(), reinterpret_cast<void *>(bias_));
+    parsed_ = true;
+    LOGD("ElfImg: %s parsed, %zu symbols, bias %p",
+         name_.c_str(), symbols_.size(), reinterpret_cast<void *>(bias_));
+}
+
+// Hand the whole-file mapping back: leaving it around is what misleads every
+// other module that looks libart.so up in /proc/self/maps.
+void ElfImg::release() {
+    if (elf_ == nullptr) return;
+    munmap(elf_, size_);
+    elf_ = nullptr;
+    size_ = 0;
 }
 
 void *ElfImg::symbol(std::string_view name) const {
@@ -185,5 +266,5 @@ void *ElfImg::symbolWithPrefix(std::string_view prefix) const {
 }
 
 ElfImg::~ElfImg() {
-    if (elf_ != nullptr) munmap(elf_, size_);
+    release();
 }

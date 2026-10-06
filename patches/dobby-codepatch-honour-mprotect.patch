@@ -1,0 +1,23 @@
+diff --git a/source/Backend/UserMode/ExecMemory/code-patch-tool-posix.cc b/source/Backend/UserMode/ExecMemory/code-patch-tool-posix.cc
+index ccb948b..b36284a 100644
+--- a/source/Backend/UserMode/ExecMemory/code-patch-tool-posix.cc
++++ b/source/Backend/UserMode/ExecMemory/code-patch-tool-posix.cc
+@@ -14,9 +14,16 @@ PUBLIC MemoryOperationError DobbyCodePatch(void *address, uint8_t *buffer, uint3
+   uintptr_t patch_end_page = ALIGN_FLOOR((uintptr_t)address + buffer_size, page_size);
+ 
+   // change page permission as rwx
+-  mprotect((void *)patch_page, page_size, PROT_READ | PROT_WRITE | PROT_EXEC);
++  if (mprotect((void *)patch_page, page_size, PROT_READ | PROT_WRITE | PROT_EXEC) != 0) {
++    ERROR_LOG("[code patch] mprotect failed at %p", (void *)patch_page);
++    return kMemoryOperationError;
++  }
+   if (patch_page != patch_end_page) {
+-    mprotect((void *)patch_end_page, page_size, PROT_READ | PROT_WRITE | PROT_EXEC);
++    if (mprotect((void *)patch_end_page, page_size, PROT_READ | PROT_WRITE | PROT_EXEC) != 0) {
++      ERROR_LOG("[code patch] mprotect failed at %p", (void *)patch_end_page);
++      mprotect((void *)patch_page, page_size, PROT_READ | PROT_EXEC);
++      return kMemoryOperationError;
++    }
+   }
+ 
+   // patch buffer

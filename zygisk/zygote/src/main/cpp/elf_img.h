@@ -15,16 +15,22 @@ public:
 
     ~ElfImg();
 
-    bool valid() const { return base_ != nullptr && header_ != nullptr; }
+    bool valid() const { return base_ != nullptr && parsed_; }
 
     void *symbol(std::string_view name) const;
 
     void *symbolWithPrefix(std::string_view prefix) const;
 
 private:
+    bool resolveLoaded();
+
+    bool resolveFromMaps();
+
     void parse();
 
-    void collect(const char *image, bool keep_strings);
+    void release();
+
+    void collect(const char *image);
 
     std::string name_;
     std::string path_;
@@ -32,8 +38,7 @@ private:
     char *elf_ = nullptr;
     off_t size_ = 0;
     uintptr_t bias_ = static_cast<uintptr_t>(-1);
-    const void *header_ = nullptr;
-    std::vector<uint8_t> debug_;
+    bool parsed_ = false;
     std::deque<std::string> owned_;
     std::unordered_map<std::string_view, uintptr_t> symbols_;
 };

@@ -1,6 +1,7 @@
 #include <jni.h>
 
 #include <atomic>
+#include <mutex>
 #include <string>
 
 #include <dobby.h>
@@ -29,6 +30,10 @@ extern "C"
 JNIEXPORT jboolean JNICALL
 Java_com_strawing_duckusb_zygote_hook_Native_initHooking(JNIEnv *env, jobject) {
     if (gReady.load(std::memory_order_acquire)) return JNI_TRUE;
+
+    static std::mutex init_lock;
+    std::lock_guard<std::mutex> guard(init_lock);
+    if (gReady.load(std::memory_order_relaxed)) return JNI_TRUE;
 
     if (gArt == nullptr) gArt = new ElfImg("libart.so");
     if (!gArt->valid()) {
