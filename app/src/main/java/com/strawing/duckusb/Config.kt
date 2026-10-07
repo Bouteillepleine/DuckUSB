@@ -46,7 +46,7 @@ object Config {
     /** Mask persist.sys.usb.config to "mtp" in the property area. Needs root. */
     const val KEY_MASK_USB_PROP = "mask_usb_prop"
 
-    /** Also mask sys.usb.config / sys.usb.state. Opt-in: the OS believes it too. */
+    /** Also mask sys.usb.state. sys.usb.config is left alone. */
     const val KEY_MASK_USB_STATE = "mask_usb_state"
 
     /** Hide the persistent "USB debugging enabled" notification. */

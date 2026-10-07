@@ -11,7 +11,9 @@ object RootTools {
     const val ADBD_SAFE = "stopped"
 
     private const val BASE_MASK = "$USB_PROP=$USB_SAFE $ADBD_PROP=$ADBD_SAFE"
-    private const val USB_STATE_MASK = "sys.usb.config=mtp sys.usb.state=mtp"
+    // sys.usb.state has no init consumers; sys.usb.config drives the gadget via
+    // "on property:sys.usb.config=*" and is read back by UsbDeviceManager.
+    private const val USB_STATE_MASK = "sys.usb.state=mtp"
 
     private fun maskList(includeUsbState: Boolean): String =
         if (includeUsbState) "$BASE_MASK $USB_STATE_MASK" else BASE_MASK
@@ -157,7 +159,6 @@ object RootTools {
         [ "${'$'}(getprop $ADBD_PROP)" = "$ADBD_SAFE" ] && "${'$'}RP" -n $ADBD_PROP running
         TRUE_CFG=${'$'}(cat /sys/class/android_usb/android0/functions 2>/dev/null)
         [ -z "${'$'}TRUE_CFG" ] && TRUE_CFG=mtp,adb
-        [ "${'$'}(getprop sys.usb.config)" = "mtp" ] && "${'$'}RP" -n sys.usb.config "${'$'}TRUE_CFG"
         [ "${'$'}(getprop sys.usb.state)" = "mtp" ] && "${'$'}RP" -n sys.usb.state "${'$'}TRUE_CFG"
         exit 0
         """.trimIndent()

@@ -258,7 +258,7 @@ class MainActivity : AppCompatActivity() {
         col.addView(ui.thinDivider())
         col.addView(ui.toggleRow(
             DuckUi.Icons.allApps, "Mask the USB function list",
-            "sys.usb.config and sys.usb.state read mtp, hiding the adb function itself. Closes detectors that read those directly. system_server's own USB manager believes it too, so leave it off unless you need it.",
+            "sys.usb.state reads mtp, hiding the adb function from detectors that read it directly. Property area only, so every read route agrees and no app is injected. sys.usb.config is untouched, so the gadget and system_server are unaffected.",
             flag(Config.KEY_MASK_USB_STATE, false), rootAvailable,
         ) { wanted ->
             setFlag(Config.KEY_MASK_USB_STATE, wanted)
