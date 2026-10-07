@@ -231,14 +231,14 @@ class MainActivity : AppCompatActivity() {
         col.addView(ui.thinDivider())
         col.addView(ui.toggleRow(
             DuckUi.Icons.tag, "Mask the USB config property",
-            "persist.sys.usb.config reads mtp and init.svc.adbd reads stopped, in the property area itself so every read route agrees. adbd keeps running. Reverts on reboot. Needs root.",
+            "persist.sys.usb.config and sys.usb.state read mtp and init.svc.adbd reads stopped, in the property area itself so every read route agrees. sys.usb.config is left alone, so adbd keeps running. Reverts on reboot. Needs root.",
             propMaskInstalled,
         ) { wanted ->
             propMaskInstalled = wanted
             setFlag(Config.KEY_MASK_USB_PROP, wanted)
             renderContent()
             background {
-                val ok = if (wanted) RootTools.setPropMask(true, flag(Config.KEY_MASK_USB_STATE, false)) else {
+                val ok = if (wanted) RootTools.setPropMask(true) else {
                     RootTools.setPropMask(false)
                     RootTools.restoreProp()
                 }
@@ -253,20 +253,6 @@ class MainActivity : AppCompatActivity() {
                     }
                     reload()
                 }
-            }
-        })
-        col.addView(ui.thinDivider())
-        col.addView(ui.toggleRow(
-            DuckUi.Icons.allApps, "Mask the USB function list",
-            "sys.usb.state reads mtp, hiding the adb function from detectors that read it directly. Property area only, so every read route agrees and no app is injected. sys.usb.config is untouched, so the gadget and system_server are unaffected.",
-            flag(Config.KEY_MASK_USB_STATE, false), rootAvailable,
-        ) { wanted ->
-            setFlag(Config.KEY_MASK_USB_STATE, wanted)
-            renderContent()
-            background {
-                if (propMaskInstalled) RootTools.setPropMask(true, wanted)
-                if (!wanted) RootTools.restoreProp()
-                runOnUiThread { reload() }
             }
         })
         col.addView(ui.thinDivider())

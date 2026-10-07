@@ -39,11 +39,11 @@ masked_list() {
     [ -f "$MODDIR/disable_hooks" ] && return 1
     flag paused && return 1
     flag spoofProps || return 1
-    # sys.usb.config and sys.usb.state are deliberately NOT masked here. They are the live
-    # USB control surface: system_server's own UsbDeviceManager reads them and would believe
-    # the lie, drop the adb function and take USB adb down with it. spoofUsbState now hides
-    # them per-process instead, through the libc read hook armed in AppPart.
-    LIST="persist.sys.usb.config=mtp init.svc.adbd=stopped"
+    # sys.usb.config stays out of this: init's "on property:sys.usb.config=*" rules act on it
+    # and reconfigure the gadget, so masking it drops the adb function. sys.usb.state has no
+    # init consumer - init only ever writes it as an echo of sys.usb.config - and masking it
+    # keeps the three readable values consistent, because a half-masked set is its own tell.
+    LIST="persist.sys.usb.config=mtp init.svc.adbd=stopped sys.usb.state=mtp"
     echo "$LIST"
     return 0
 }
