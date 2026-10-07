@@ -8,6 +8,7 @@
 #include <dobby.h>
 
 #include "Logger.h"
+#include "self_pin.h"
 
 namespace {
 
@@ -130,6 +131,11 @@ Java_com_strawing_duckusb_zygote_hook_Native_installPropHooks(
         g_entries.push_back(std::move(e));
     }
     if (g_entries.empty()) return 0;
+
+    if (!pin_self()) {
+        LOGE("module image could not be pinned, property spoof not armed");
+        return 0;
+    }
 
     int armed = 0;
     if (DobbyHook(reinterpret_cast<void *>(real_get),

@@ -9,6 +9,7 @@
 
 #include "elf_img.h"
 #include "Logger.h"
+#include "self_pin.h"
 
 static ElfImg *gArt = nullptr;
 static std::atomic<bool> gReady{false};
@@ -34,6 +35,11 @@ Java_com_strawing_duckusb_zygote_hook_Native_initHooking(JNIEnv *env, jobject) {
     static std::mutex init_lock;
     std::lock_guard<std::mutex> guard(init_lock);
     if (gReady.load(std::memory_order_relaxed)) return JNI_TRUE;
+
+    if (!pin_self()) {
+        LOGE("module image could not be pinned, hooking not initialised");
+        return JNI_FALSE;
+    }
 
     if (gArt == nullptr) gArt = new ElfImg("libart.so");
     if (!gArt->valid()) {
