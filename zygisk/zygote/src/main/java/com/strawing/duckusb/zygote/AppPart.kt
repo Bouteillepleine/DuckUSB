@@ -18,12 +18,9 @@ object AppPart {
 
     private fun armPropSpoof(packageName: String?) {
         val config = ModuleConfig.config
-        if (ModuleConfig.disabled || config.paused || !config.spoofProps) return
+        if (ModuleConfig.disabled || config.paused || !config.spoofUsbState) return
 
-        val overrides = LinkedHashMap<String, String>()
-        overrides[Config.PERSIST_USB_PROP] = Config.PERSIST_USB_SAFE
-        if (config.spoofUsbState) overrides.putAll(Config.PROP_OVERRIDES)
-        else overrides["init.svc.adbd"] = Config.PROP_OVERRIDES["init.svc.adbd"] ?: "stopped"
+        val overrides = LinkedHashMap(Config.PROP_OVERRIDES)
         if (overrides.isEmpty()) return
 
         if (!NativeLib.load(ModuleConfig.moduleDir)) return

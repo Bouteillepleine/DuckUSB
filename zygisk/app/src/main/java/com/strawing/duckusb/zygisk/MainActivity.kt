@@ -340,7 +340,7 @@ class MainActivity : AppCompatActivity() {
         col.addView(ui.thinDivider())
         col.addView(ui.toggleRow(
             DuckUi.Icons.allApps, "Mask the USB function list",
-            "sys.usb.config and sys.usb.state read mtp inside scoped apps only, via a libc read hook. The real store keeps its value, so USB adb keeps working. COST: the hook only exists where we inject, so turning this on adds the scoped apps to the injection list. Framework mode alone injects nothing.",
+            "sys.usb.config reads mtp inside scoped apps only, via a libc read hook. It is the one USB property that cannot be masked globally, because init reconfigures the gadget from it. The others are already masked for every app by the USB config property switch. COST: this injects the scoped apps and leaves an inline patch in their libc, which memory scanners can see. Leave it off unless something reads sys.usb.config directly.",
             config.spoofUsbState,
         ) {
             config.spoofUsbState = it

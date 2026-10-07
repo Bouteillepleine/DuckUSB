@@ -45,10 +45,12 @@ object Config {
     const val PERSIST_USB_PROP = "persist.sys.usb.config"
     const val PERSIST_USB_SAFE = "mtp"
 
+    // Only the key the property area cannot mask: init's "on property:sys.usb.config=*" rules
+    // reconfigure the gadget from it. persist.sys.usb.config, init.svc.adbd and sys.usb.state
+    // are masked globally by service.sh instead, so hooking them here would duplicate that at
+    // the cost of an inline patch in every scoped app.
     val PROP_OVERRIDES: Map<String, String> = mapOf(
         "sys.usb.config" to "mtp",
-        "sys.usb.state" to "mtp",
-        "init.svc.adbd" to "stopped",
     )
 
     val ADB_CHANNELS = setOf("DEVELOPER", "DEVELOPER_IMPORTANT")
