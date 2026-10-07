@@ -36,9 +36,11 @@ Java_com_strawing_duckusb_zygote_hook_Native_initHooking(JNIEnv *env, jobject) {
     std::lock_guard<std::mutex> guard(init_lock);
     if (gReady.load(std::memory_order_relaxed)) return JNI_TRUE;
 
+    // Not fatal: a failed pin only risks a dangling hook if this image is unloaded, and the
+    // processes LSPlant runs in keep the module classloader for their lifetime. Refusing here
+    // took framework mode down in system_server, where dlopen of the module path is refused.
     if (!pin_self()) {
-        LOGE("module image could not be pinned, hooking not initialised");
-        return JNI_FALSE;
+        LOGD("module image could not be pinned (%s); continuing", pin_self_error());
     }
 
     if (gArt == nullptr) gArt = new ElfImg("libart.so");

@@ -133,7 +133,7 @@ Java_com_strawing_duckusb_zygote_hook_Native_installPropHooks(
     if (g_entries.empty()) return 0;
 
     if (!pin_self()) {
-        LOGE("module image could not be pinned, property spoof not armed");
+        LOGE("module image could not be pinned (%s), property spoof not armed", pin_self_error());
         return 0;
     }
 
