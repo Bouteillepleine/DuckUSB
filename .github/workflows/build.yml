@@ -215,10 +215,17 @@ jobs:
               --repo "$GITHUB_REPOSITORY" \
               --clobber
           else
+            # --generate-notes alone diffs against the newest tag of ANY variant, so an
+            # xposed release ended up comparing against the other variant's tag. Pin the
+            # start tag to the previous xposed-v* release.
+            PREV=$(gh release list --repo "$GITHUB_REPOSITORY" --limit 100 --json tagName \
+              --jq '.[].tagName' | grep "^xposed-v" | grep -v "^${TAG}$" | head -1 || true)
+            NOTES=(--generate-notes)
+            if [ -n "$PREV" ]; then NOTES+=(--notes-start-tag "$PREV"); fi
             gh release create "$TAG" "${ASSETS[@]}" \
               --repo "$GITHUB_REPOSITORY" \
               --title "Xposed ${VERSION}" \
-              --generate-notes
+              "${NOTES[@]}"
           fi
 
       - name: Publish to the Xposed module repository
@@ -279,8 +286,15 @@ jobs:
               --repo "$GITHUB_REPOSITORY" \
               --clobber
           else
+            # --generate-notes alone diffs against the newest tag of ANY variant, so a
+            # zygisk release ended up comparing against the other variant's tag. Pin the
+            # start tag to the previous zygisk-v* release.
+            PREV=$(gh release list --repo "$GITHUB_REPOSITORY" --limit 100 --json tagName \
+              --jq '.[].tagName' | grep "^zygisk-v" | grep -v "^${TAG}$" | head -1 || true)
+            NOTES=(--generate-notes)
+            if [ -n "$PREV" ]; then NOTES+=(--notes-start-tag "$PREV"); fi
             gh release create "$TAG" "${ASSETS[@]}" \
               --repo "$GITHUB_REPOSITORY" \
               --title "Zygisk ${VERSION}" \
-              --generate-notes
+              "${NOTES[@]}"
           fi
