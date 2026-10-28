@@ -40,7 +40,7 @@ git submodule update --init --recursive
 
 JDK 21. The Zygisk half needs NDK 29 and CMake 3.31.6 (LSPlant + Dobby). Signing comes from a git-ignored `key.properties` or from `DUCKUSB_STORE_FILE` / `DUCKUSB_STORE_PASSWORD` / `DUCKUSB_KEY_ALIAS` / `DUCKUSB_KEY_PASSWORD`; without either it builds unsigned.
 
-Don't rotate the signing key — Android identifies an app by its signature, so a differently signed build cannot update an installed one.
+The 2026-07 signing key leaked with its password in git history and was rotated on 2026-10-28. `duckusb.lineage` is the APK Signature Scheme v3 rotation proof from that key to the current one; `sign.sh` applies it after Gradle, using the legacy key only for the v2 block Android 8 reads. Releases carry certificate `89:A8:BE:F3:D2:BF:55:DD:BD:17:03:56:49:1F:87:82:1A:96:63:15:F2:BE:2C:2C:DC:12:FD:B9:44:3A:08:8F`. Never rotate again without extending the lineage: Android identifies an app by its signature, so a build outside the lineage cannot update an installed one.
 
 ## Releases
 
