@@ -38,9 +38,11 @@ git submodule update --init --recursive
 ./gradlew :zygisk:app:assembleRelease     # Zygisk manager APK
 ```
 
-JDK 21. The Zygisk half needs NDK 29 and CMake 3.31.6 (LSPlant + Dobby). Signing comes from a git-ignored `key.properties` or from `DUCKUSB_STORE_FILE` / `DUCKUSB_STORE_PASSWORD` / `DUCKUSB_KEY_ALIAS` / `DUCKUSB_KEY_PASSWORD`; without either it builds unsigned.
+JDK 21. The Zygisk half needs NDK 29 and CMake 3.31.6 (LSPlant + Dobby). Without signing material it builds unsigned.
 
-The 2026-07 signing key leaked with its password in git history and was rotated on 2026-10-28. `duckusb.lineage` is the APK Signature Scheme v3 rotation proof from that key to the current one; `sign.sh` applies it after Gradle, using the legacy key only for the v2 block Android 8 reads. Releases carry certificate `89:A8:BE:F3:D2:BF:55:DD:BD:17:03:56:49:1F:87:82:1A:96:63:15:F2:BE:2C:2C:DC:12:FD:B9:44:3A:08:8F`. Never rotate again without extending the lineage: Android identifies an app by its signature, so a build outside the lineage cannot update an installed one.
+Signing happens in two steps. Gradle signs with the current key, read from a git-ignored `key.properties` (`storeFile`, `storePassword`, `keyAlias`, `keyPassword`) or from `DUCKUSB_STORE_FILE` / `DUCKUSB_STORE_PASSWORD` / `DUCKUSB_KEY_ALIAS` / `DUCKUSB_KEY_PASSWORD`. `sign.sh` then re-signs the APKs with `duckusb.lineage`, the APK Signature Scheme v3 rotation proof from the 2026-07 key to the current one; it also needs the legacy key (`legacy*` entries in `key.properties`, or `DUCKUSB_LEGACY_STORE_FILE` / `DUCKUSB_LEGACY_STORE_PASSWORD` / `DUCKUSB_LEGACY_KEY_ALIAS` / `DUCKUSB_LEGACY_KEY_PASSWORD`) for the v2 block Android 8 reads. The 2026-07 key leaked with its password in git history and was rotated on 2026-10-28; CI refuses to build when the legacy secret is missing, because a build outside the lineage cannot update an installed one.
+
+Releases carry certificate `89:A8:BE:F3:D2:BF:55:DD:BD:17:03:56:49:1F:87:82:1A:96:63:15:F2:BE:2C:2C:DC:12:FD:B9:44:3A:08:8F`. Never rotate again without extending the lineage with `apksigner rotate`.
 
 ## Releases
 
