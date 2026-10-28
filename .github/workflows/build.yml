@@ -72,6 +72,9 @@ jobs:
             echo "$LEGACY_KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/duckusb-legacy.jks"
             echo "DUCKUSB_LEGACY_STORE_FILE=$RUNNER_TEMP/duckusb-legacy.jks" >> "$GITHUB_ENV"
             echo "legacy keystore decoded"
+          elif [ -n "$KEYSTORE_B64" ]; then
+            echo "::error::DUCKUSB_KEYSTORE_BASE64 is set but DUCKUSB_LEGACY_KEYSTORE_BASE64 is not; a build signed without the lineage cannot update installed copies."
+            exit 1
           fi
 
       - name: Build
