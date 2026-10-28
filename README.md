@@ -30,8 +30,6 @@ git submodule update --init --recursive
 
 JDK 21; Zygisk needs NDK 29 and CMake 3.31.6. Unsigned without signing material.
 
-Signing: Gradle uses the current key from git-ignored `key.properties` or `DUCKUSB_STORE_FILE` / `DUCKUSB_STORE_PASSWORD` / `DUCKUSB_KEY_ALIAS` / `DUCKUSB_KEY_PASSWORD`. `sign.sh` then re-signs with `duckusb.lineage` (v3 rotation proof from the 2026-07 key, which leaked in git history and was rotated 2026-10-28) and the legacy key (`legacy*` in `key.properties` or `DUCKUSB_LEGACY_*`) for the v2 block Android 8 reads. CI fails without the legacy secret. Release certificate: `89:A8:BE:F3:D2:BF:55:DD:BD:17:03:56:49:1F:87:82:1A:96:63:15:F2:BE:2C:2C:DC:12:FD:B9:44:3A:08:8F`. Rotate only by extending the lineage with `apksigner rotate`.
-
 ## Releases
 
 Tags `xposed-vX.Y.Z` and `zygisk-vX.Y.Z` publish each variant independently.
