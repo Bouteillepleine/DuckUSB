@@ -2,32 +2,22 @@
 
 [![Build APK](https://github.com/Bouteillepleine/DuckUSB/actions/workflows/build.yml/badge.svg)](https://github.com/Bouteillepleine/DuckUSB/actions/workflows/build.yml)
 
-Makes apps read **USB debugging, wireless debugging and Developer Options as OFF while they stay really ON**, and hides the persistent *"USB debugging enabled"* notification.
-
-Detectors don't read any real adb state — they ask the settings provider for `adb_enabled`, `adb_wifi_enabled` and `development_settings_enabled`.
-
-Two builds, same behaviour. Pick one:
+Apps read USB debugging, wireless debugging and Developer Options as OFF while they stay ON. The "USB debugging enabled" notification is hidden.
 
 | | |
 |---|---|
-| **Xposed** (`:app`) | APK. Enable in LSPosed, tick the **`system`** scope entry, reboot. |
-| **Zygisk** (`:zygisk`) | Flashable zip for KernelSU / Magisk, plus a manager APK. Flash, reboot. |
+| **Xposed** (`:app`) | APK. Enable in LSPosed, tick the `system` scope, reboot. |
+| **Zygisk** (`:zygisk`) | Zip for KernelSU / Magisk plus a manager APK. Flash, reboot. |
 
 ## How
 
-One hook in `system_server`, on the settings provider's `call` **and** `query`, so the getter and a direct cursor read agree. Results are rewritten per caller by uid.
-
-Nothing is injected into the apps being fooled — they have no hook residue in their own memory to find. Callers below uid 10000 (root, shell, system) and the OS file-transfer components always read the truth, so `adb`, MTP and the Settings toggle keep working.
-
-## What it changes
+One hook in `system_server` on the settings provider's `call` and `query`, rewritten per caller uid. Nothing is injected into the fooled apps. Uids below 10000 and the OS file-transfer components read the truth, so adb, MTP and the Settings toggle keep working.
 
 | | |
 |---|---|
 | `adb_enabled`, `adb_wifi_enabled`, `development_settings_enabled` | `0` |
-| `persist.sys.usb.config` | `mtp`, written to the property area only — the persisted value stays `adb`, so a reboot restores it and USB can never come up without adb |
-| USB debugging notification | swallowed, and the one posted during boot is cancelled |
-
-The manager shows the live hook count and every caller lied to since boot, and compares what it reads against the true values served from `system_server`.
+| `persist.sys.usb.config` | `mtp` in the property area only; the persisted `adb` survives reboot |
+| USB debugging notification | swallowed, boot-time one cancelled |
 
 ## Build
 
@@ -38,16 +28,14 @@ git submodule update --init --recursive
 ./gradlew :zygisk:app:assembleRelease     # Zygisk manager APK
 ```
 
-JDK 21. The Zygisk half needs NDK 29 and CMake 3.31.6 (LSPlant + Dobby). Without signing material it builds unsigned.
+JDK 21; Zygisk needs NDK 29 and CMake 3.31.6. Unsigned without signing material.
 
-Signing happens in two steps. Gradle signs with the current key, read from a git-ignored `key.properties` (`storeFile`, `storePassword`, `keyAlias`, `keyPassword`) or from `DUCKUSB_STORE_FILE` / `DUCKUSB_STORE_PASSWORD` / `DUCKUSB_KEY_ALIAS` / `DUCKUSB_KEY_PASSWORD`. `sign.sh` then re-signs the APKs with `duckusb.lineage`, the APK Signature Scheme v3 rotation proof from the 2026-07 key to the current one; it also needs the legacy key (`legacy*` entries in `key.properties`, or `DUCKUSB_LEGACY_STORE_FILE` / `DUCKUSB_LEGACY_STORE_PASSWORD` / `DUCKUSB_LEGACY_KEY_ALIAS` / `DUCKUSB_LEGACY_KEY_PASSWORD`) for the v2 block Android 8 reads. The 2026-07 key leaked with its password in git history and was rotated on 2026-10-28; CI refuses to build when the legacy secret is missing, because a build outside the lineage cannot update an installed one.
-
-Releases carry certificate `89:A8:BE:F3:D2:BF:55:DD:BD:17:03:56:49:1F:87:82:1A:96:63:15:F2:BE:2C:2C:DC:12:FD:B9:44:3A:08:8F`. Never rotate again without extending the lineage with `apksigner rotate`.
+Signing: Gradle uses the current key from git-ignored `key.properties` or `DUCKUSB_STORE_FILE` / `DUCKUSB_STORE_PASSWORD` / `DUCKUSB_KEY_ALIAS` / `DUCKUSB_KEY_PASSWORD`. `sign.sh` then re-signs with `duckusb.lineage` (v3 rotation proof from the 2026-07 key, which leaked in git history and was rotated 2026-10-28) and the legacy key (`legacy*` in `key.properties` or `DUCKUSB_LEGACY_*`) for the v2 block Android 8 reads. CI fails without the legacy secret. Release certificate: `89:A8:BE:F3:D2:BF:55:DD:BD:17:03:56:49:1F:87:82:1A:96:63:15:F2:BE:2C:2C:DC:12:FD:B9:44:3A:08:8F`. Rotate only by extending the lineage with `apksigner rotate`.
 
 ## Releases
 
-The two variants ship independently, from prefixed tags: `xposed-v2.0.0` publishes the Xposed APK, `zygisk-v2.0.0` the module zip and its manager. A fix to one never forces a version bump on the other.
+Tags `xposed-vX.Y.Z` and `zygisk-vX.Y.Z` publish each variant independently.
 
 ## Tested on
 
-OnePlus 15 (CPH2747), OxygenOS, Android 16, KernelSU Next + ReZygisk + LSPosed. Both variants report clean on Duck Detector. Other ROMs are unknown, though the provider is matched by authority and the guards key off uid rather than OEM package names.
+OnePlus 15 (CPH2747), OxygenOS, Android 16, KernelSU Next + ReZygisk + LSPosed. Clean on Duck Detector. Other ROMs untested; the provider is matched by authority and the guards by uid, not OEM package names.
