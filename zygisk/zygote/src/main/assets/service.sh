@@ -1,6 +1,6 @@
 MODDIR=${0%/*}
 LIMIT=150
-MASK_INTERVAL=60
+MASK_INTERVAL=10
 
 i=0
 while [ "$(getprop sys.boot_completed)" != "1" ]; do

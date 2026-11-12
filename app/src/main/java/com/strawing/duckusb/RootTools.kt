@@ -110,6 +110,7 @@ object RootTools {
             [ -z "${'$'}RP" ] && RP=${'$'}(command -v resetprop 2>/dev/null)
             [ -z "${'$'}RP" ] && exit 0
             W=0
+            MI=10
             "${'$'}RP" -h 2>&1 | grep -q -- "--wait" && W=1
             while true; do
                 for pair in $masked; do
@@ -119,11 +120,11 @@ object RootTools {
                 done
                 if [ "${'$'}W" = 1 ]; then
                     START=${'$'}(date +%s)
-                    "${'$'}RP" -w --timeout 60 $ADBD_PROP "${'$'}(getprop $ADBD_PROP)" >/dev/null 2>&1
+                    "${'$'}RP" -w --timeout ${'$'}MI $ADBD_PROP "${'$'}(getprop $ADBD_PROP)" >/dev/null 2>&1
                     [ "${'$'}(( ${'$'}(date +%s) - START ))" -le 0 ] && sleep 1
                     continue
                 fi
-                sleep 60
+                sleep ${'$'}MI
             done
             DUCKUSB_BOOT
             chmod 0755 $BOOT_SCRIPT
