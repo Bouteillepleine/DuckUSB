@@ -53,6 +53,13 @@ RESETPROP=$(find_resetprop) || {
     exit 0
 }
 
+# resetprop -w parks on the property's own futex until the key is written again, so the mask
+# comes back in milliseconds instead of up to MASK_INTERVAL seconds. Flags have to precede the
+# positionals - "-w KEY VALUE --timeout N" is rejected by the parser - and a build without it
+# falls back to the plain interval.
+WAIT=0
+"$RESETPROP" -h 2>&1 | grep -q -- "--wait" && WAIT=1
+
 # Runs for the life of the boot, not a fixed number of passes: init rewrites init.svc.* on
 # every service state change, so a USB mode switch or a stop/start of adbd unmasks it again.
 #
@@ -61,6 +68,7 @@ RESETPROP=$(find_resetprop) || {
 # gadget down entirely.
 while true; do
     if MASKED=$(masked_list); then
+        WAIT_KEY=
         for pair in $MASKED; do
             key=${pair%%=*}
             want=${pair#*=}
@@ -68,7 +76,17 @@ while true; do
                 "$RESETPROP" -n "$key" "$want"
                 log -t DuckUSB "$key now reads $(getprop $key) in memory"
             fi
+            [ "$key" = "init.svc.adbd" ] && WAIT_KEY=$key
         done
+        if [ "$WAIT" = 1 ] && [ -n "$WAIT_KEY" ]; then
+            # Every adbd restart - USB reconnect, function switch, adb usb/tcpip - rewrites this
+            # key, and that is the same event that makes init rewrite sys.usb.state.
+            START=$(date +%s)
+            "$RESETPROP" -w --timeout "$MASK_INTERVAL" "$WAIT_KEY" "$(getprop $WAIT_KEY)" >/dev/null 2>&1
+            # The wait is woken by our own -n write as well, so bound the loop if the key flaps.
+            [ "$(( $(date +%s) - START ))" -le 0 ] && sleep 1
+            continue
+        fi
     fi
     sleep "$MASK_INTERVAL"
 done

@@ -87,7 +87,10 @@ object RootTools {
      * takes the USB gadget down entirely.
      *
      * The script re-applies for the life of the boot rather than a fixed number of passes,
-     * because init rewrites init.svc.* whenever the service changes state.
+     * because init rewrites init.svc.* whenever the service changes state. It parks on
+     * resetprop -w, which returns the moment init rewrites the key, so the mask is restored in
+     * milliseconds instead of up to a minute; the timeout is only a floor, and a resetprop
+     * without -w falls back to it.
      */
     fun setPropMask(enabled: Boolean): Boolean {
         if (!enabled) {
@@ -106,12 +109,20 @@ object RootTools {
             done
             [ -z "${'$'}RP" ] && RP=${'$'}(command -v resetprop 2>/dev/null)
             [ -z "${'$'}RP" ] && exit 0
+            W=0
+            "${'$'}RP" -h 2>&1 | grep -q -- "--wait" && W=1
             while true; do
                 for pair in $masked; do
                     key=${'$'}{pair%%=*}
                     want=${'$'}{pair#*=}
                     [ "${'$'}(getprop ${'$'}key)" = "${'$'}want" ] || "${'$'}RP" -n "${'$'}key" "${'$'}want"
                 done
+                if [ "${'$'}W" = 1 ]; then
+                    START=${'$'}(date +%s)
+                    "${'$'}RP" -w --timeout 60 $ADBD_PROP "${'$'}(getprop $ADBD_PROP)" >/dev/null 2>&1
+                    [ "${'$'}(( ${'$'}(date +%s) - START ))" -le 0 ] && sleep 1
+                    continue
+                fi
                 sleep 60
             done
             DUCKUSB_BOOT
