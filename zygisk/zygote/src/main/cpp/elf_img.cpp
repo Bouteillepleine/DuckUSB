@@ -11,6 +11,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <map>
+#include <mutex>
 #include <vector>
 
 extern "C" {
@@ -26,15 +27,21 @@ using Elf_Phdr = ElfW(Phdr);
 
 namespace {
 
+constexpr size_t kInitialOut = 4u << 20;
+constexpr size_t kMaxOut = 64u << 20;
+
+bool fits(size_t size, uint64_t offset, uint64_t length) {
+    return offset <= size && length <= size - offset;
+}
+
 std::vector<uint8_t> inflate(const uint8_t *in, size_t in_size) {
-    static bool crc_ready = false;
-    if (!crc_ready) {
+    static std::once_flag crc_once;
+    std::call_once(crc_once, [] {
         xz_crc32_init();
         xz_crc64_init();
-        crc_ready = true;
-    }
-    std::vector<uint8_t> out(4u << 20);
-    for (int attempt = 0; attempt < 5; attempt++) {
+    });
+    for (size_t cap = kInitialOut; cap <= kMaxOut; cap *= 4) {
+        std::vector<uint8_t> out(cap);
         xz_dec *dec = xz_dec_init(XZ_SINGLE, 0);
         if (dec == nullptr) return {};
         xz_buf buf{};
@@ -50,12 +57,12 @@ std::vector<uint8_t> inflate(const uint8_t *in, size_t in_size) {
             out.resize(buf.out_pos);
             return out;
         }
-        if (ret != XZ_BUF_ERROR && ret != XZ_MEMLIMIT_ERROR) {
+        if (ret != XZ_BUF_ERROR || buf.out_pos != buf.out_size) {
             LOGD("gnu_debugdata: xz failed with %d", ret);
             return {};
         }
-        out.assign(out.size() * 4, 0);
     }
+    LOGD("gnu_debugdata: larger than %zu bytes, skipped", kMaxOut);
     return {};
 }
 
@@ -178,40 +185,55 @@ ElfImg::ElfImg(std::string_view base_name) : name_(base_name) {
     release();
 }
 
-void ElfImg::collect(const char *image) {
+void ElfImg::collect(const char *image, size_t size) {
+    if (size < sizeof(Elf_Ehdr)) return;
     auto *header = reinterpret_cast<const Elf_Ehdr *>(image);
     if (memcmp(header->e_ident, ELFMAG, SELFMAG) != 0) return;
+    if (header->e_shentsize != sizeof(Elf_Shdr)) return;
+    if (!fits(size, header->e_shoff, uint64_t(header->e_shnum) * sizeof(Elf_Shdr))) return;
 
     auto *sections = reinterpret_cast<const Elf_Shdr *>(image + header->e_shoff);
     for (int i = 0; i < header->e_shnum; i++) {
         const auto &section = sections[i];
         if (section.sh_type != SHT_SYMTAB && section.sh_type != SHT_DYNSYM) continue;
-        if (section.sh_entsize == 0) continue;
+        if (section.sh_entsize < sizeof(Elf_Sym)) continue;
+        if (!fits(size, section.sh_offset, section.sh_size)) continue;
+        if (section.sh_link >= header->e_shnum) continue;
+        const auto &strtab = sections[section.sh_link];
+        if (!fits(size, strtab.sh_offset, strtab.sh_size)) continue;
 
-        auto *symbols = reinterpret_cast<const Elf_Sym *>(image + section.sh_offset);
-        auto count = section.sh_size / section.sh_entsize;
-        auto *strings = image + sections[section.sh_link].sh_offset;
-
+        const char *strings = image + strtab.sh_offset;
+        size_t count = section.sh_size / section.sh_entsize;
         for (size_t s = 0; s < count; s++) {
-            const auto &symbol = symbols[s];
-            if (symbol.st_name == 0 || symbol.st_value == 0) continue;
-            owned_.emplace_back(strings + symbol.st_name);
-            symbols_.emplace(owned_.back(), static_cast<uintptr_t>(symbol.st_value));
+            auto *symbol = reinterpret_cast<const Elf_Sym *>(
+                    image + section.sh_offset + s * section.sh_entsize);
+            if (symbol->st_name == 0 || symbol->st_value == 0) continue;
+            if (symbol->st_name >= strtab.sh_size) continue;
+            size_t room = strtab.sh_size - symbol->st_name;
+            size_t length = strnlen(strings + symbol->st_name, room);
+            if (length == room) continue;
+            owned_.emplace_back(strings + symbol->st_name, length);
+            symbols_.emplace(owned_.back(), static_cast<uintptr_t>(symbol->st_value));
         }
     }
 }
 
 void ElfImg::parse() {
+    const auto size = static_cast<size_t>(size_);
+    if (size < sizeof(Elf_Ehdr)) return;
     auto *header = reinterpret_cast<Elf_Ehdr *>(elf_);
     if (memcmp(header->e_ident, ELFMAG, SELFMAG) != 0) return;
 
     if (bias_ == static_cast<uintptr_t>(-1)) {
-        for (int i = 0; i < header->e_phnum; i++) {
-            auto *program = reinterpret_cast<Elf_Phdr *>(
-                    elf_ + header->e_phoff + header->e_phentsize * i);
-            if (program->p_type == PT_LOAD && program->p_offset == 0) {
-                bias_ = reinterpret_cast<uintptr_t>(base_) - program->p_vaddr;
-                break;
+        if (header->e_phentsize == sizeof(Elf_Phdr) &&
+            fits(size, header->e_phoff, uint64_t(header->e_phnum) * sizeof(Elf_Phdr))) {
+            for (int i = 0; i < header->e_phnum; i++) {
+                auto *program = reinterpret_cast<Elf_Phdr *>(
+                        elf_ + header->e_phoff + sizeof(Elf_Phdr) * i);
+                if (program->p_type == PT_LOAD && program->p_offset == 0) {
+                    bias_ = reinterpret_cast<uintptr_t>(base_) - program->p_vaddr;
+                    break;
+                }
             }
         }
         if (bias_ == static_cast<uintptr_t>(-1)) {
@@ -219,18 +241,28 @@ void ElfImg::parse() {
         }
     }
 
-    collect(elf_);
+    collect(elf_, size);
 
-    auto *sections = reinterpret_cast<Elf_Shdr *>(elf_ + header->e_shoff);
-    auto *section_names = elf_ + sections[header->e_shstrndx].sh_offset;
-    for (int i = 0; i < header->e_shnum; i++) {
-        auto &section = sections[i];
-        if (strcmp(section_names + section.sh_name, ".gnu_debugdata") != 0) continue;
-        auto data = inflate(reinterpret_cast<const uint8_t *>(elf_ + section.sh_offset),
-                            section.sh_size);
-        if (data.empty()) break;
-        collect(reinterpret_cast<const char *>(data.data()));
-        break;
+    static constexpr char kDebugData[] = ".gnu_debugdata";
+    if (header->e_shentsize == sizeof(Elf_Shdr) &&
+        fits(size, header->e_shoff, uint64_t(header->e_shnum) * sizeof(Elf_Shdr)) &&
+        header->e_shstrndx < header->e_shnum) {
+        auto *sections = reinterpret_cast<Elf_Shdr *>(elf_ + header->e_shoff);
+        const auto &names = sections[header->e_shstrndx];
+        if (fits(size, names.sh_offset, names.sh_size)) {
+            const char *section_names = elf_ + names.sh_offset;
+            for (int i = 0; i < header->e_shnum; i++) {
+                const auto &section = sections[i];
+                if (section.sh_name >= names.sh_size) continue;
+                if (names.sh_size - section.sh_name < sizeof(kDebugData)) continue;
+                if (memcmp(section_names + section.sh_name, kDebugData, sizeof(kDebugData)) != 0) continue;
+                if (!fits(size, section.sh_offset, section.sh_size)) break;
+                auto data = inflate(reinterpret_cast<const uint8_t *>(elf_ + section.sh_offset),
+                                    section.sh_size);
+                if (!data.empty()) collect(reinterpret_cast<const char *>(data.data()), data.size());
+                break;
+            }
+        }
     }
 
     parsed_ = true;
@@ -256,13 +288,13 @@ void *ElfImg::symbol(std::string_view name) const {
 
 void *ElfImg::symbolWithPrefix(std::string_view prefix) const {
     if (!valid()) return nullptr;
+    const std::pair<const std::string_view, uintptr_t> *best = nullptr;
     for (const auto &entry: symbols_) {
-        if (entry.first.size() >= prefix.size() &&
-            entry.first.compare(0, prefix.size(), prefix) == 0) {
-            return reinterpret_cast<void *>(bias_ + entry.second);
-        }
+        if (entry.first.size() < prefix.size()) continue;
+        if (entry.first.compare(0, prefix.size(), prefix) != 0) continue;
+        if (best == nullptr || entry.first < best->first) best = &entry;
     }
-    return nullptr;
+    return best == nullptr ? nullptr : reinterpret_cast<void *>(bias_ + best->second);
 }
 
 ElfImg::~ElfImg() {

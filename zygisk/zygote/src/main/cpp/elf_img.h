@@ -30,7 +30,7 @@ private:
 
     void release();
 
-    void collect(const char *image);
+    void collect(const char *image, size_t size);
 
     std::string name_;
     std::string path_;
