@@ -1,6 +1,13 @@
 MODDIR=${0%/*}
-LIMIT=150
+LIMIT=300
 MASK_INTERVAL=10
+FP_FILE="$MODDIR/last_fingerprint"
+FP=$(getprop ro.build.fingerprint)
+
+if [ -f "$FP_FILE" ] && [ "$(cat "$FP_FILE" 2>/dev/null)" != "$FP" ]; then
+    LIMIT=900
+    log -t DuckUSB "build changed since the last boot, allowing ${LIMIT}s to finish"
+fi
 
 i=0
 while [ "$(getprop sys.boot_completed)" != "1" ]; do
@@ -15,8 +22,10 @@ while [ "$(getprop sys.boot_completed)" != "1" ]; do
     sleep 1
 done
 
-sleep 30
+sleep 10
 rm -f "$MODDIR/boot_attempts"
+echo "$FP" > "$FP_FILE"
+chmod 0644 "$FP_FILE"
 log -t DuckUSB "boot completed, attempt counter cleared"
 
 sh "$MODDIR/describe.sh" 2>/dev/null
@@ -39,6 +48,9 @@ masked_list() {
     [ -f "$MODDIR/disable_hooks" ] && return 1
     flag paused && return 1
     flag spoofProps || return 1
+    flag hookSystemServer || return 1
+    flag frameworkMode || return 1
+    flag spoofSettings || return 1
     # sys.usb.config stays out of this: init's "on property:sys.usb.config=*" rules act on it
     # and reconfigure the gadget, so masking it drops the adb function. sys.usb.state has no
     # init consumer - init only ever writes it as an echo of sys.usb.config - and masking it

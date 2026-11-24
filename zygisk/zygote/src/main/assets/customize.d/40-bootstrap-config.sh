@@ -13,9 +13,13 @@ else
   "paused": false,
   "spoofSettings": true,
   "spoofProps": true,
+  "spoofUsbState": false,
   "hideNotif": true,
   "coverQueryPath": true,
   "verboseLog": false,
+  "hookSystemServer": false,
+  "frameworkMode": false,
+  "frameworkAllApps": false,
   "targets": []
 }
 JSON
@@ -28,6 +32,9 @@ if [ -d "$OLD_PACKAGES" ]; then
         cp -af "$f" "$MODPATH/packages/"
     done
 fi
+
+[ -f /data/adb/modules/duckusb_zygisk/last_fingerprint ] && \
+    cp -af /data/adb/modules/duckusb_zygisk/last_fingerprint "$MODPATH/last_fingerprint"
 
 rm -f "$MODPATH/boot_attempts" "$MODPATH/disable_hooks"
 
