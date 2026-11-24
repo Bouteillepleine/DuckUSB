@@ -19,7 +19,7 @@ elif ! [ -f "$CONFIG" ]; then
 elif flag paused; then
     STATUS="⏸️ Paused"
     DETAIL="Hooks are loaded but everything reads true."
-elif ! flag frameworkMode; then
+elif ! flag frameworkMode || ! flag hookSystemServer; then
     STATUS="⚠️ Framework mode off"
     DETAIL="Nothing is spoofing. Turn it on in the app, then reboot."
 elif ! flag spoofSettings; then

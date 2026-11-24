@@ -242,6 +242,10 @@ object Root {
         "/data/adb/modules/zygisksu",
         "/data/adb/modules/rezygisk",
         "/data/adb/modules/zygisk_next",
+        "/data/adb/modules/admirepowered",
+        "/data/adb/modules/zygisk_on_ksu",
+        "/data/adb/modules/yukizygisk",
+        "/data/adb/modules/onyxzygisk",
     )
 
     private val FAILED = object : Shell.Result() {
