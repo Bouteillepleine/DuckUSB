@@ -46,6 +46,7 @@ object FrameworkPart {
 
     private val lock = Any()
     private val targetCache = SparseBooleanArray()
+    private var targetGeneration = 0
 
     fun arm() {
         val provider = runCatching { localProvider() }.getOrNull() as? ContentProvider ?: run {
@@ -109,7 +110,10 @@ object FrameworkPart {
     }
 
     fun invalidateTargets() {
-        synchronized(lock) { targetCache.clear() }
+        synchronized(lock) {
+            targetCache.clear()
+            targetGeneration++
+        }
     }
 
     private fun watchPackages(context: Context) {
@@ -138,6 +142,7 @@ object FrameworkPart {
     }
 
     private fun isTarget(uid: Int): Boolean {
+        val generation = synchronized(lock) { targetGeneration }
         val config = ModuleConfig.config
         if (config.targets.isEmpty() && !config.frameworkAllApps) return false
         val appId = uid % Config.PER_USER_RANGE
@@ -156,11 +161,11 @@ object FrameworkPart {
         } ?: return false
         if (packages.any { it == Config.PKG }) return false
         if (packages.any { it in Config.SPARE_PACKAGES }) {
-            synchronized(lock) { targetCache.put(uid, false) }
+            synchronized(lock) { if (targetGeneration == generation) targetCache.put(uid, false) }
             return false
         }
         val target = if (config.frameworkAllApps) true else packages.any { config.isTarget(it) }
-        synchronized(lock) { targetCache.put(uid, target) }
+        synchronized(lock) { if (targetGeneration == generation) targetCache.put(uid, target) }
         return target
     }
 

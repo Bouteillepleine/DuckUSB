@@ -57,7 +57,7 @@ std::vector<uint8_t> inflate(const uint8_t *in, size_t in_size) {
             out.resize(buf.out_pos);
             return out;
         }
-        if (ret != XZ_BUF_ERROR || buf.out_pos != buf.out_size) {
+        if (ret != XZ_BUF_ERROR) {
             LOGD("gnu_debugdata: xz failed with %d", ret);
             return {};
         }
