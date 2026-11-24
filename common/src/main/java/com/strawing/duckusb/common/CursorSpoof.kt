@@ -1,12 +1,13 @@
 package com.strawing.duckusb.common
 
+import android.content.ContentResolver
 import android.database.Cursor
 import android.database.MatrixCursor
 import com.strawing.duckusb.common.Config
 
 object CursorSpoof {
 
-    fun rewrite(cursor: Cursor, fallbackKey: String?): Cursor? {
+    fun rewrite(cursor: Cursor, fallbackKey: String?, resolver: ContentResolver? = null): Cursor? {
         if (cursor.count <= 0) return null
         val columns = cursor.columnNames ?: return null
         val nameIdx = cursor.getColumnIndex("name")
@@ -42,6 +43,9 @@ object CursorSpoof {
         val matrix = MatrixCursor(columns, rows.size)
         for (row in rows) matrix.addRow(row)
         runCatching { cursor.extras?.let { matrix.extras = it } }
+        if (resolver != null) {
+            runCatching { cursor.notificationUri?.let { matrix.setNotificationUri(resolver, it) } }
+        }
         runCatching { cursor.close() }
         return matrix
     }
