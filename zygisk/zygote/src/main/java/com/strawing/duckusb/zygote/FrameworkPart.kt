@@ -288,7 +288,7 @@ object FrameworkPart {
         if (!isTarget(uid)) return null
         val cursor = result as? Cursor ?: return null
         val uri = args.firstOrNull { it is Uri } as? Uri
-        val replaced = CursorSpoof.rewrite(cursor, uri?.lastPathSegment) ?: return null
+        val replaced = CursorSpoof.rewrite(cursor, uri?.lastPathSegment, context?.contentResolver) ?: return null
         service?.note(uid, "query")
         Logx.v { "framework spoofed a cursor for uid $uid" }
         return replaced

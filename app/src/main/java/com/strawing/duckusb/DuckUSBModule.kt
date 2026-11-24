@@ -289,7 +289,8 @@ class DuckUSBModule : XposedModule() {
                 val cursor = result as? Cursor
                 if (cursor != null) {
                     val uri = chain.args.firstOrNull { it is Uri } as? Uri
-                    replaced = CursorSpoof.rewrite(cursor, uri?.lastPathSegment)
+                    val resolver = (chain.thisObject as? android.content.ContentProvider)?.context?.contentResolver
+                    replaced = CursorSpoof.rewrite(cursor, uri?.lastPathSegment, resolver)
                     if (replaced != null) service?.note(uid, "query")
                 }
             }
