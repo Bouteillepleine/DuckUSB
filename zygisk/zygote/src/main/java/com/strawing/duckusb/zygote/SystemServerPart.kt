@@ -214,7 +214,7 @@ object SystemServerPart {
                 .getDeclaredMethod("get", String::class.java)
                 .apply { isAccessible = true }
         }.getOrNull() ?: return false
-        repeat(600) {
+        repeat(960) {
             val value = runCatching { get.invoke(null, "sys.boot_completed") as? String }.getOrNull()
             if (value == "1") return true
             Thread.sleep(1000)
