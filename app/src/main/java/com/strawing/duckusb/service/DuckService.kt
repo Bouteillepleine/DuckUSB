@@ -188,7 +188,7 @@ class DuckService(private val context: Context) : IDuckService.Stub() {
         val token = Binder.clearCallingIdentity()
         try {
             for (key in keys) {
-                if (key.isNullOrEmpty()) continue
+                if (key.isNullOrEmpty() || key !in com.strawing.duckusb.common.Config.SPOOF_KEYS) continue
                 val value = runCatching {
                     android.provider.Settings.Global.getString(context.contentResolver, key)
                 }.getOrNull()

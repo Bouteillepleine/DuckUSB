@@ -1,10 +1,14 @@
 package com.strawing.duckusb.zygote
 
+import android.content.BroadcastReceiver
 import android.content.ContentProvider
 import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
 import android.database.Cursor
 import android.net.Uri
 import android.os.Binder
+import android.os.Build
 import android.os.Bundle
 import android.util.SparseBooleanArray
 import com.strawing.duckusb.common.Bridge
@@ -55,6 +59,7 @@ object FrameworkPart {
         }
 
         service = DuckService(context!!)
+        watchPackages(context!!)
         var count = 0
         for (m in XHook.methodsOf(provider.javaClass)) {
             when {
@@ -103,6 +108,29 @@ object FrameworkPart {
         return null
     }
 
+    fun invalidateTargets() {
+        synchronized(lock) { targetCache.clear() }
+    }
+
+    private fun watchPackages(context: Context) {
+        val filter = IntentFilter().apply {
+            addAction(Intent.ACTION_PACKAGE_ADDED)
+            addAction(Intent.ACTION_PACKAGE_REMOVED)
+            addAction(Intent.ACTION_PACKAGE_REPLACED)
+            addDataScheme("package")
+        }
+        val receiver = object : BroadcastReceiver() {
+            override fun onReceive(c: Context?, intent: Intent?) = invalidateTargets()
+        }
+        runCatching {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                context.registerReceiver(receiver, filter, Context.RECEIVER_NOT_EXPORTED)
+            } else {
+                context.registerReceiver(receiver, filter)
+            }
+        }.onFailure { Logx.e("package watcher not registered, target cache clears on config push only", it) }
+    }
+
     private fun spoofing(): Boolean {
         val config = ModuleConfig.config
         return !ModuleConfig.disabled && !config.paused &&
@@ -145,9 +173,7 @@ object FrameworkPart {
     private val ownBridge = java.lang.reflect.InvocationHandler { _, _, args ->
         val uid = args?.getOrNull(0) as? Int
         val svc = service
-        if (uid == null || svc == null || svc.callerAppId < 0 ||
-            uid % Config.PER_USER_RANGE != svc.callerAppId
-        ) {
+        if (uid == null || svc == null || !svc.isManager(uid)) {
             null
         } else {
             Bundle().apply { putBinder(Bridge.KEY_BINDER, svc) }
@@ -168,9 +194,7 @@ object FrameworkPart {
         }
         val svc = service
         val uidNow = callingUid()
-        if (svc != null && uidNow != null && svc.callerAppId >= 0 &&
-            uidNow % Config.PER_USER_RANGE == svc.callerAppId && matchesBridge(f.args)
-        ) {
+        if (svc != null && uidNow != null && matchesBridge(f.args) && svc.isManager(uidNow)) {
             f.result = Bundle().apply { putBinder(Bridge.KEY_BINDER, svc) }
             return
         }
