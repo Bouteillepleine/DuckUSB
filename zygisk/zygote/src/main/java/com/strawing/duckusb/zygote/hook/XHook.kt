@@ -19,6 +19,9 @@ class Frame(
 
     var result: Any? = null
 
+    var error: Throwable? = null
+        private set
+
     val thisObject: Any?
         get() = if (static) null else raw.getOrNull(0)
 
@@ -42,8 +45,14 @@ class Frame(
     fun proceed(): Any? {
         val backup = hooker.backup ?: throw IllegalStateException("no backup for ${member.name}")
         val params = if (static) raw else raw.copyOfRange(1, raw.size)
-        result = backup.invoke(thisObject, *params)
         proceeded = true
+        try {
+            result = backup.invoke(thisObject, *params)
+        } catch (e: java.lang.reflect.InvocationTargetException) {
+            val cause = e.cause ?: e
+            error = cause
+            throw cause
+        }
         return result
     }
 }
@@ -59,8 +68,13 @@ class Hooker(private val member: Executable, private val body: (Frame) -> Unit) 
         try {
             body(frame)
         } catch (t: Throwable) {
-            Logx.e("hook body failed on ${member.name}", t)
-            if (!frame.proceeded) return frame.proceed()
+            if (!frame.proceeded) {
+                Logx.e("hook body failed on ${member.name} before reaching the real method", t)
+                return frame.proceed()
+            }
+            val real = frame.error
+            if (real != null) throw real
+            Logx.e("hook body failed on ${member.name} after a successful real call", t)
         }
         val type = frame.returnType
         if (!frame.proceeded && frame.result == null && type != Void.TYPE && type.isPrimitive) {

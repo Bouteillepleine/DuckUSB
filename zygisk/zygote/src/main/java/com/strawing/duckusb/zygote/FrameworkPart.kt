@@ -181,26 +181,41 @@ object FrameworkPart {
                 return
             }
         }
-        f.proceed()
+        try {
+            f.proceed()
+        } catch (t: Throwable) {
+            val uid = uidNow ?: throw t
+            if (!spoofing() || !isTarget(uid)) throw t
+            val (method, key) = findGetKey(f.args) ?: throw t
+            if (method !in Config.GET_METHODS || key == null) throw t
+            val spoofed = Config.SPOOF_VALUES[key] ?: throw t
+            f.result = Bundle().apply {
+                putString(Config.CALL_VALUE, spoofed)
+                putInt(Config.CALL_GENERATION_INDEX, -1)
+            }
+            service?.note(uid, key)
+            Logx.v { "framework spoofed $key for uid $uid (real read was refused)" }
+            return
+        }
         val uid = callingUid() ?: return
         runCatching { spoofCall(uid, f.args, f.result)?.let { f.result = it } }
             .onFailure { Logx.e("framework call spoof failed", it) }
         SpoofRegistry.apply(SpoofRegistry.CALL, uid, f.args, f.result)?.let { f.result = it }
     }
 
-    fun spoofCall(uid: Int, args: List<Any?>, result: Any?): Any? {
-        if (!spoofing()) return null
-        var method: String? = null
-        var key: String? = null
+    private fun findGetKey(args: List<Any?>): Pair<String, String?>? {
         for (i in args.indices) {
             val a = args[i]
             if (a is String && (a in Config.GET_METHODS || a in Config.LIST_METHODS)) {
-                method = a
-                key = args.getOrNull(i + 1) as? String
-                break
+                return a to (args.getOrNull(i + 1) as? String)
             }
         }
-        if (method == null) return null
+        return null
+    }
+
+    fun spoofCall(uid: Int, args: List<Any?>, result: Any?): Any? {
+        if (!spoofing()) return null
+        val (method, key) = findGetKey(args) ?: return null
         if (!isTarget(uid)) return null
         val bundle = result as? Bundle ?: return null
         if (method in Config.LIST_METHODS) return spoofSettingsList(uid, bundle)
