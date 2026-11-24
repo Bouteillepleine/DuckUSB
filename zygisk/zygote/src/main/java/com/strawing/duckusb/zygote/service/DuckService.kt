@@ -1,10 +1,13 @@
 package com.strawing.duckusb.zygote.service
 
 import android.content.Context
+import android.content.pm.PackageManager
 import android.os.Binder
 import android.os.Bundle
 import android.util.ArrayMap
 import com.strawing.duckusb.IDuckService
+import com.strawing.duckusb.zygote.BuildConfig
+import com.strawing.duckusb.zygote.FrameworkPart
 import com.strawing.duckusb.common.Bridge
 import com.strawing.duckusb.common.Config
 import com.strawing.duckusb.zygote.util.Logx
@@ -35,24 +38,28 @@ class DuckService(private val context: Context) : IDuckService.Stub() {
     private val lock = Any()
     private val records = ArrayMap<Int, Rec>()
 
-    @Volatile
-    private var resolvedAppId = -1
+    private val managerCert: ByteArray by lazy {
+        Config.MANAGER_CERT_SHA256.chunked(2).map { it.toInt(16).toByte() }.toByteArray()
+    }
 
-    val callerAppId: Int
-        get() {
-            if (resolvedAppId >= 0) return resolvedAppId
-            val id = runCatching {
-                context.packageManager.getApplicationInfo(Config.PKG, 0).uid % Config.PER_USER_RANGE
-            }.getOrDefault(-1)
-            if (id >= 0) resolvedAppId = id
-            return id
+    fun isManager(uid: Int): Boolean {
+        val token = Binder.clearCallingIdentity()
+        return try {
+            val pm = context.packageManager
+            val packages = pm.getPackagesForUid(uid) ?: return false
+            if (Config.PKG !in packages) return false
+            BuildConfig.DEBUG ||
+                pm.hasSigningCertificate(Config.PKG, managerCert, PackageManager.CERT_INPUT_SHA256)
+        } catch (_: Throwable) {
+            false
+        } finally {
+            Binder.restoreCallingIdentity(token)
         }
+    }
 
     private fun enforceCaller() {
         val uid = Binder.getCallingUid()
-        if (callerAppId < 0 || uid % Config.PER_USER_RANGE != callerAppId) {
-            throw SecurityException("caller uid $uid is not the module")
-        }
+        if (!isManager(uid)) throw SecurityException("caller uid $uid is not the module")
     }
 
     fun note(uid: Int, key: String) {
@@ -101,6 +108,7 @@ class DuckService(private val context: Context) : IDuckService.Stub() {
         if (bundle.containsKey(Bridge.STATE_ALL_APPS)) next.frameworkAllApps = bundle.getBoolean(Bridge.STATE_ALL_APPS)
         bundle.getStringArrayList(Bridge.STATE_TARGETS)?.let { next.targets = LinkedHashSet(it) }
         ModuleConfig.config = next
+        FrameworkPart.invalidateTargets()
         Logx.verbose = next.verboseLog
         Logx.i("config pushed: paused=${next.paused} settings=${next.spoofSettings} allApps=${next.frameworkAllApps}")
     }
@@ -135,7 +143,7 @@ class DuckService(private val context: Context) : IDuckService.Stub() {
         val token = Binder.clearCallingIdentity()
         try {
             for (key in keys) {
-                if (key.isNullOrEmpty()) continue
+                if (key.isNullOrEmpty() || key !in Config.SPOOF_KEYS) continue
                 val value = runCatching {
                     android.provider.Settings.Global.getString(context.contentResolver, key)
                 }.getOrNull()

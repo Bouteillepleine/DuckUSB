@@ -2,6 +2,7 @@ package com.strawing.duckusb.common
 
 object Config {
     const val PKG = "com.strawing.duckusb.zygisk"
+    const val MANAGER_CERT_SHA256 = "89a8bef3d2bf55ddbd170356491f87821a966315f2be2c2cdc12fdb9443a088f"
     const val MODULE_ID = "duckusb_zygisk"
     const val MODULE_VERSION = "2.1.9"
     const val LIVE_PROPERTY = "duckusb.zygisk.live"
