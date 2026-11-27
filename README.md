@@ -1,5 +1,7 @@
 # DuckUSB
 
+**English** | [简体中文](README_zh.md)
+
 [![Build APK](https://github.com/Bouteillepleine/DuckUSB/actions/workflows/build.yml/badge.svg)](https://github.com/Bouteillepleine/DuckUSB/actions/workflows/build.yml)
 
 Apps read USB debugging, wireless debugging and Developer Options as OFF while they stay ON. The "USB debugging enabled" notification is hidden.
