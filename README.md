@@ -35,7 +35,3 @@ JDK 21; Zygisk needs NDK 29 and CMake 3.31.6. Unsigned without signing material.
 ## Releases
 
 Tags `xposed-vX.Y.Z` and `zygisk-vX.Y.Z` publish each variant independently.
-
-## Tested on
-
-OnePlus 15 (CPH2747), OxygenOS, Android 16, KernelSU Next + ReZygisk + LSPosed. Clean on Duck Detector. Other ROMs untested; the provider is matched by authority and the guards by uid, not OEM package names.

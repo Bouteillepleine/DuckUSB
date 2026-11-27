@@ -22,7 +22,3 @@
 | `adb_enabled`、`adb_wifi_enabled`、`development_settings_enabled` | `0` |
 | `persist.sys.usb.config` | 仅在属性区中为 `mtp`；持久化的 `adb` 重启后保留 |
 | USB 调试通知 | 拦截，开机时的那条会被取消 |
-
-## 测试环境
-
-一加 15（CPH2747），OxygenOS，Android 16，KernelSU Next + ReZygisk + LSPosed。Duck Detector 检测无异常。其他 ROM 未经测试；设置提供程序按 authority 匹配，防护按 uid 判断，不依赖厂商包名。
